@@ -36,6 +36,7 @@
 + (void)rebuildTabs;
 + (void)openPublish;
 + (void)openSearch;
++ (void)tapLegacyTabNamed:(NSString *)name;
 
 #pragma mark - 首页顶栏
 

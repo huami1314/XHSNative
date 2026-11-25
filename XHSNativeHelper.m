@@ -363,6 +363,68 @@ static NSArray<NSArray *> *glassBars(void) {
     });
 }
 
+// 等同于再点一次自绘底栏对应按钮。小红书把重选标签的处理（如首页刷新）写在那条栏自己的点击里，
+// 系统底栏重选时走的是选中回调、不经过它，所以在这里把这一下补回去
++ (void)tapLegacyTabNamed:(NSString *)name {
+    XYTabbarController *controller = XHSNativeConfig.shared.tabBarController;
+    UIView *bar = controller ? [controller customtabBar] : nil;
+    if (!bar || !name.length) return;
+
+    UIControl *control = nil;
+    // 先按自绘底栏自己的标签数据找：tabs 里 itemName 对得上的那个对象
+    id tabsValue = nil;
+    @try { tabsValue = [bar valueForKey:@"tabs"]; } @catch (NSException *exception) { tabsValue = nil; }
+    NSArray *tabs = [tabsValue isKindOfClass:NSArray.class] ? tabsValue : nil;
+    for (id target in tabs) {
+        NSString *itemName = nil;
+        @try { itemName = [target valueForKey:@"itemName"]; } @catch (NSException *exception) { itemName = nil; }
+        if (![itemName isEqualToString:name]) continue;
+        if ([target isKindOfClass:UIControl.class]) control = (UIControl *)target;
+        else if ([target isKindOfClass:UIView.class]) control = [self firstControlIn:(UIView *)target];
+        if (control) break;
+    }
+
+    // 找不到就退一步：自绘底栏上的按钮从左到右和标签顺序一致，按下标取
+    if (!control) {
+        NSArray<NSString *> *names = [self legacyTabNames:controller];
+        NSUInteger index = names ? [names indexOfObject:name] : NSNotFound;
+        if (index != NSNotFound) {
+            NSMutableArray<UIControl *> *controls = [NSMutableArray array];
+            [self collectControlsIn:bar into:controls];
+            UIControl *center = [controller respondsToSelector:@selector(centerButton)] ? [controller centerButton] : nil;
+            NSMutableArray<UIControl *> *candidates = [NSMutableArray array];
+            for (UIControl *candidate in controls) {
+                if (candidate == center) continue;
+                if (CGRectGetWidth(candidate.bounds) <= 0 || CGRectGetHeight(candidate.bounds) <= 0) continue;
+                [candidates addObject:candidate];
+            }
+            [candidates sortUsingComparator:^NSComparisonResult(UIControl *a, UIControl *b) {
+                CGFloat ax = CGRectGetMinX([a convertRect:a.bounds toView:nil]);
+                CGFloat bx = CGRectGetMinX([b convertRect:b.bounds toView:nil]);
+                return ax < bx ? NSOrderedAscending : (ax > bx ? NSOrderedDescending : NSOrderedSame);
+            }];
+            if (index < candidates.count) control = candidates[index];
+        }
+    }
+
+    if (control) [control sendActionsForControlEvents:UIControlEventTouchUpInside];
+}
+
+// 深度优先找第一个 UIControl，view 本身是也算
++ (UIControl *)firstControlIn:(UIView *)view {
+    if ([view isKindOfClass:UIControl.class]) return (UIControl *)view;
+    for (UIView *subview in view.subviews) {
+        UIControl *control = [self firstControlIn:subview];
+        if (control) return control;
+    }
+    return nil;
+}
+
++ (void)collectControlsIn:(UIView *)view into:(NSMutableArray<UIControl *> *)out {
+    if ([view isKindOfClass:UIControl.class]) [out addObject:(UIControl *)view];
+    for (UIView *subview in view.subviews) [self collectControlsIn:subview into:out];
+}
+
 #pragma mark - 首页顶栏
 
 static char kBarEdgeKey, kSoftEdgeKey, kPublishKey, kSegmentGlassKey;
