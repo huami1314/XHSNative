@@ -47,10 +47,22 @@ jobs:
           make -j"$(sysctl -n hw.ncpu)" TARGET_CODESIGN=codesign TARGET_CODESIGN_FLAGS="-s -"
           xcrun lipo packages/XHSNative-*.dylib -verify_arch arm64
 
+      - name: Build deb
+        run: |
+          command -v dpkg-deb >/dev/null || brew install dpkg
+          for scheme in rootless roothide; do
+            rm -rf .theos
+            make package -j"$(sysctl -n hw.ncpu)" FINALPACKAGE=1 SCHEME=$scheme TARGET_CODESIGN=codesign TARGET_CODESIGN_FLAGS="-s -"
+          done
+          ls packages/*.deb
+          test "$(ls packages/*.deb | wc -l)" -eq 2
+
       - uses: actions/upload-artifact@v4
         with:
           name: XHSNative
-          path: packages/XHSNative-*.dylib
+          path: |
+            packages/XHSNative-*.dylib
+            packages/*.deb
           if-no-files-found: error
 
   release:
@@ -75,6 +87,8 @@ jobs:
         run: |
           file="XHSNative-${TAG#v}.dylib"
           test -f "$file"
+          debs=(*.deb)
+          test "${#debs[@]}" -eq 2
           notes="$RUNNER_TEMP/release-notes.md"
           awk -v version="${TAG#v}" '
             /^## / { active = ($2 == version); next }
@@ -85,8 +99,8 @@ jobs:
             END { if (!found) exit 1 }
           ' CHANGELOG.md > "$notes"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$file" --clobber
+            gh release upload "$TAG" "$file" "${debs[@]}" --clobber
             gh release edit "$TAG" --notes-file "$notes"
           else
-            gh release create "$TAG" "$file" --verify-tag --title "$TAG" --notes-file "$notes"
+            gh release create "$TAG" "$file" "${debs[@]}" --verify-tag --title "$TAG" --notes-file "$notes"
           fi

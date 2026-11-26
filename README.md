@@ -14,15 +14,25 @@
 
 设置入口在小红书「设置」→「XHSNative」。
 
+## 安装
+
+[Releases](https://github.com/huami1314/XHSNative/releases) 里有：
+
+- `XHSNative-<版本号>.dylib`：注入 IPA 用。
+- `com.huami.xhsnative_<版本号>_iphoneos-arm64.deb`：无根越狱。
+- `com.huami.xhsnative_<版本号>_iphoneos-arm64e.deb`：roothide。
+
 ## 编译
 
-在装有 Theos 环境下的机器运行：
+在装有 [roothide/theos](https://github.com/roothide/theos) 的机器运行：
 
 ```bash
-make
+make                          # dylib
+make package                  # 无根 deb
+make package SCHEME=roothide  # roothide deb
 ```
 
-产物在 `packages/XHSNative-<版本号>.dylib`。
+产物都在 `packages` 目录。
 
 ## 声明与许可
 
