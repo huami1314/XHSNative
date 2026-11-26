@@ -31,6 +31,8 @@ NSString *const kXHSNativeBarVideoTop = @"videoTop";
 NSString *const kXHSNativeBarVideoBottom = @"videoBottom";
 NSString *const kXHSNativeBarComment = @"comment";
 NSString *const kXHSNativeBarProfile = @"profile";
+NSString *const kXHSNativeBarTab = @"tab";
+NSString *const kXHSNativeBarSearch = @"search";
 
 static NSString *const kTabOrder = @"XHSNative.tabOrder";
 static NSString *const kTabHidden = @"XHSNative.tabHidden";
@@ -38,6 +40,9 @@ static NSString *const kChannelHidden = @"XHSNative.channelHidden";
 static NSString *const kChannelOrder = @"XHSNative.channelOrder";
 static NSString *const kChannelNames = @"XHSNative.channelNames";
 static NSString *const kFillPrefix = @"XHSNative.fill.";
+static NSString *const kBlur = @"XHSNative.blur";
+static NSString *const kTabIconSize = @"XHSNative.tabIconSize";
+static NSString *const kTabTitleSize = @"XHSNative.tabTitleSize";
 
 @implementation XHSNativeConfig
 
@@ -164,6 +169,35 @@ static NSString *const kFillPrefix = @"XHSNative.fill.";
 
 - (void)setFill:(CGFloat)fill forBar:(NSString *)bar {
     [NSUserDefaults.standardUserDefaults setDouble:fill forKey:[kFillPrefix stringByAppendingString:bar]];
+}
+
+static CGFloat number(NSString *key, CGFloat fallback, CGFloat low, CGFloat high) {
+    id value = [NSUserDefaults.standardUserDefaults objectForKey:key];
+    return value ? MIN(MAX([value doubleValue], low), high) : fallback;
+}
+
+- (CGFloat)blurPercent {
+    return number(kBlur, 60, 0, 100);
+}
+
+- (void)setBlurPercent:(CGFloat)blur {
+    [NSUserDefaults.standardUserDefaults setDouble:blur forKey:kBlur];
+}
+
+- (CGFloat)tabIconSize {
+    return number(kTabIconSize, 28, 16, 32);
+}
+
+- (void)setTabIconSize:(CGFloat)size {
+    [NSUserDefaults.standardUserDefaults setDouble:size forKey:kTabIconSize];
+}
+
+- (CGFloat)tabTitleSize {
+    return number(kTabTitleSize, 10, 8, 14);
+}
+
+- (void)setTabTitleSize:(CGFloat)size {
+    [NSUserDefaults.standardUserDefaults setDouble:size forKey:kTabTitleSize];
 }
 
 - (void)reset {

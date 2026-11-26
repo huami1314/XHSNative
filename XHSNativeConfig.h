@@ -37,6 +37,8 @@ extern NSString *const kXHSNativeBarVideoTop;
 extern NSString *const kXHSNativeBarVideoBottom;
 extern NSString *const kXHSNativeBarComment;
 extern NSString *const kXHSNativeBarProfile;
+extern NSString *const kXHSNativeBarTab;      // 下面两处只有低系统有，玻璃是插件画的
+extern NSString *const kXHSNativeBarSearch;
 
 @interface XHSNativeConfig : NSObject
 
@@ -85,6 +87,11 @@ extern NSString *const kXHSNativeBarProfile;
 // 0 是纯玻璃，100 不透
 - (CGFloat)fillForBar:(NSString *)bar;
 - (void)setFill:(CGFloat)fill forBar:(NSString *)bar;
+
+// 只有低系统用：插件画的玻璃的模糊程度（0~100），底栏图标和文字的字号
+@property (nonatomic, assign) CGFloat blurPercent;
+@property (nonatomic, assign) CGFloat tabIconSize;
+@property (nonatomic, assign) CGFloat tabTitleSize;
 
 // 清掉所有 XHSNative 的设置
 - (void)reset;

@@ -16,10 +16,10 @@ include $(THEOS)/makefiles/common.mk
 LIBRARY_NAME = XHSNative
 RELEASE_VERSION := $(shell awk -F'"' '/define XHSNativeVersion / {sub(/[^0-9.].*/, "", $$2); print $$2}' XHSNativeConfig.h)
 
-XHSNative_FILES = XHSNative.xm XHSNativeHelper.m XHSNativeConfig.m XHSNativeSave.m
+XHSNative_FILES = XHSNative.xm XHSNativeLegacyHooks.xm XHSNativeHelper.m XHSNativeConfig.m XHSNativeSave.m XHSNativeLegacy.m XHSNativeViewState.m Artwork.S
 XHSNative_CFLAGS = -fobjc-arc -w
 XHSNative_STRIP_FLAGS = -x
-XHSNative_FRAMEWORKS = UIKit Photos
+XHSNative_FRAMEWORKS = UIKit QuartzCore Photos
 XHSNative_LDFLAGS = -Wl,-install_name,@rpath/XHSNative.dylib
 XHSNative_LOGOSFLAGS = -c generator=internal
 

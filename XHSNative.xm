@@ -15,9 +15,8 @@
 
 #pragma mark - 底栏
 
-// 底栏、顶栏和各页面的玻璃都是 iOS 26 的东西，放在 Glass 组里，只在 26 及以上加载
-
-%group Glass
+// 只在 iOS 26 及以上加载的放在 Native 组里，用的是系统的液态玻璃；更早的系统由 XHSNativeLegacyHooks.xm
+// 换成插件自己画的仿玻璃，两边各写一份的方法也在那边。其余各系统共用
 
 // 小红书的底栏是自己画的一条，盖在系统 UITabBar 上，再把系统的内容藏掉。
 // 这里反过来：藏掉它画的那条，放出系统的，用 UITab 重新排一遍，右侧加系统的搜索标签。
@@ -26,18 +25,6 @@
 // 小红书把系统底栏刷成不透明的白底（换主题时还会再刷），页面因此被截在底栏上方。
 // 它刷的时机很散，直接在底栏的这几个入口上拦，保持系统默认的悬浮样子
 %hook UITabBar
-
-- (void)setStandardAppearance:(UITabBarAppearance *)appearance {
-    %orig([XHSNativeHelper isOurTabBar:self] ? [UITabBarAppearance new] : appearance);
-}
-
-- (void)setScrollEdgeAppearance:(UITabBarAppearance *)appearance {
-    %orig([XHSNativeHelper isOurTabBar:self] ? nil : appearance);
-}
-
-- (void)setBackgroundColor:(UIColor *)color {
-    %orig([XHSNativeHelper isOurTabBar:self] ? nil : color);
-}
 
 - (void)setBackgroundImage:(UIImage *)image {
     %orig([XHSNativeHelper isOurTabBar:self] ? nil : image);
@@ -77,15 +64,10 @@
     self.tabBar.unselectedItemTintColor = UIColor.labelColor;
 }
 
-- (void)viewDidLayoutSubviews {
-    %orig;
-    UIView *legacy = [self customtabBar];
-    if (legacy.alpha > 0 && [XHSNativeHelper tabNamed:@"index"]) legacy.alpha = 0;
-    if (XHSNativeConfig.shared.tabsDirty && !self.isTabBarHidden) [XHSNativeHelper rebuildTabs];
-}
-
 - (void)setViewControllers:(NSArray<UIViewController *> *)pages animated:(BOOL)animated {
     XHSNativeConfig *config = XHSNativeConfig.shared;
+    // 低系统重排标签是直接换 viewControllers，这时不是小红书在设页面
+    if (config.rebuilding) return %orig;
     config.pages = nil;
     %orig;
     NSMutableArray<NSString *> *names = [NSMutableArray array];
@@ -113,6 +95,71 @@
     UIViewController *page = self.selectedViewController;
     NSUInteger index = page ? [config.pages indexOfObjectIdenticalTo:page] : NSNotFound;
     return index == NSNotFound ? 0 : index;
+}
+
+%end
+
+%hook XYPHHomeTabbarController
+
+- (void)showBadgeWithValue:(NSString *)value forTabBarId:(NSString *)name {
+    if (self == XHSNativeConfig.shared.tabBarController && [XHSNativeHelper hasRebuiltTabs] && name.length) {
+        NSArray *names = [XHSNativeHelper legacyTabNames:self];
+        NSUInteger index = [names indexOfObject:name];
+        if (names && index != NSNotFound) {
+            [self setBadgeValue:value forItemAtIndex:index];
+            return;
+        }
+    }
+    %orig;
+}
+
+- (id<UIViewControllerAnimatedTransitioning>)tabBarController:(UITabBarController *)controller animationControllerForTransitionFromViewController:(UIViewController *)from toViewController:(UIViewController *)to {
+    if (controller == self && [XHSNativeHelper hasRebuiltTabs]) return nil;
+    return %orig;
+}
+
+%end
+
+// 二级页面大多不设 hidesBottomBarWhenPushed（旧底栏是它自己手动藏的），系统底栏会一直浮在上面
+%hook XYPHNavigationViewController
+
+- (void)pushViewController:(UIViewController *)page animated:(BOOL)animated {
+    if (self.viewControllers.count) page.hidesBottomBarWhenPushed = YES;
+    %orig;
+}
+
+- (void)setViewControllers:(NSArray<UIViewController *> *)pages animated:(BOOL)animated {
+    for (NSUInteger i = 1; i < pages.count; i++) pages[i].hidesBottomBarWhenPushed = YES;
+    %orig;
+}
+
+%end
+
+%group Native
+
+%hook UITabBar
+
+- (void)setStandardAppearance:(UITabBarAppearance *)appearance {
+    %orig([XHSNativeHelper isOurTabBar:self] ? [UITabBarAppearance new] : appearance);
+}
+
+- (void)setScrollEdgeAppearance:(UITabBarAppearance *)appearance {
+    %orig([XHSNativeHelper isOurTabBar:self] ? nil : appearance);
+}
+
+- (void)setBackgroundColor:(UIColor *)color {
+    %orig([XHSNativeHelper isOurTabBar:self] ? nil : color);
+}
+
+%end
+
+%hook XYTabbarController
+
+- (void)viewDidLayoutSubviews {
+    %orig;
+    UIView *legacy = [self customtabBar];
+    if (legacy.alpha > 0 && [XHSNativeHelper tabNamed:@"index"]) legacy.alpha = 0;
+    if (XHSNativeConfig.shared.tabsDirty && !self.isTabBarHidden) [XHSNativeHelper rebuildTabs];
 }
 
 - (void)setSelectedIndex:(NSUInteger)index {
@@ -149,23 +196,6 @@
 
 %hook XYPHHomeTabbarController
 
-- (void)showBadgeWithValue:(NSString *)value forTabBarId:(NSString *)name {
-    if (self == XHSNativeConfig.shared.tabBarController && [XHSNativeHelper tabNamed:@"index"] && name.length) {
-        NSArray *names = [XHSNativeHelper legacyTabNames:self];
-        NSUInteger index = [names indexOfObject:name];
-        if (names && index != NSNotFound) {
-            [self setBadgeValue:value forItemAtIndex:index];
-            return;
-        }
-    }
-    %orig;
-}
-
-- (id<UIViewControllerAnimatedTransitioning>)tabBarController:(UITabBarController *)controller animationControllerForTransitionFromViewController:(UIViewController *)from toViewController:(UIViewController *)to {
-    if (controller == self && [XHSNativeHelper tabNamed:@"index"]) return nil;
-    return %orig;
-}
-
 %new
 - (BOOL)tabBarController:(UITabBarController *)controller shouldSelectTab:(UITab *)tab {
     if ([tab isKindOfClass:UISearchTab.class]) {
@@ -183,22 +213,7 @@
 - (void)tabBarController:(UITabBarController *)controller didSelectTab:(UITab *)tab previousTab:(UITab *)previous {
     if ([self respondsToSelector:@selector(tabBarController:didSelectViewController:)])
         [self tabBarController:controller didSelectViewController:tab.viewController];
-    if (tab == previous) [XHSNativeHelper reselectTab:tab];
-}
-
-%end
-
-// 二级页面大多不设 hidesBottomBarWhenPushed（旧底栏是它自己手动藏的），系统底栏会一直浮在上面
-%hook XYPHNavigationViewController
-
-- (void)pushViewController:(UIViewController *)page animated:(BOOL)animated {
-    if (self.viewControllers.count) page.hidesBottomBarWhenPushed = YES;
-    %orig;
-}
-
-- (void)setViewControllers:(NSArray<UIViewController *> *)pages animated:(BOOL)animated {
-    for (NSUInteger i = 1; i < pages.count; i++) pages[i].hidesBottomBarWhenPushed = YES;
-    %orig;
+    if (tab == previous) [XHSNativeHelper reselectPage:tab.viewController];
 }
 
 %end
@@ -226,7 +241,6 @@
 
 // 内容延伸到顶栏后面，用系统的 soft 滚动边缘；右上角的搜索进了底栏，位置换成发布。
 // 下沉布局是小红书给折叠屏写好的，这里让普通机型也用上。
-// 频道的隐藏、排序、改名不依赖玻璃，各个系统都加载
 
 %hook XYMHomeViewController
 
@@ -246,15 +260,27 @@
 
 %hook XYMHomeNaviBar
 
+- (void)homeThemeChanged {
+    %orig;
+    [XHSNativeHelper stripBarBackground:self];
+}
+
+- (void)setIndex:(NSInteger)index {
+    %orig;
+    [XHSNativeHelper stripBarBackground:self];
+    [XHSNativeHelper attachVisibleList];
+    // 翻页动画结束后列表才完全到位，再接一次
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [XHSNativeHelper attachVisibleList]; });
+}
+
 - (void)layoutSubviews {
     %orig;
-    if ([XHSNativeHelper supportsGlass]) [XHSNativeHelper layoutHomeBar:self];
-    else [XHSNativeHelper customizeChannelsOfBar:self];
+    [XHSNativeHelper layoutHomeBar:self];
 }
 
 %end
 
-%group Glass
+%group Native
 
 %hook XYMHomeViewController
 
@@ -297,23 +323,6 @@
 
 - (void)setHidden:(BOOL)hidden {
     %orig(hidden && ![XHSNativeHelper isPinnedEdgeEffect:self]);
-}
-
-%end
-
-%hook XYMHomeNaviBar
-
-- (void)homeThemeChanged {
-    %orig;
-    [XHSNativeHelper stripBarBackground:self];
-}
-
-- (void)setIndex:(NSInteger)index {
-    %orig;
-    [XHSNativeHelper stripBarBackground:self];
-    [XHSNativeHelper attachVisibleList];
-    // 翻页动画结束后列表才完全到位，再接一次
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [XHSNativeHelper attachVisibleList]; });
 }
 
 %end
@@ -404,8 +413,6 @@
 
 #pragma mark - 滚动联动
 
-%group Glass
-
 // UICollectionView / UITableView 各自重写了 didMoveToWindow，不一定走到 UIScrollView 的实现，三个都挂
 %hook UIScrollView
 - (void)didMoveToWindow {
@@ -438,12 +445,6 @@
 %end
 
 %hook XYPMMessageCenterViewController
-- (void)configureNavigationBarLiquidGlass {
-    %orig;
-    if (![XHSNativeConfig.shared boolForKey:kXHSNativeGlassMessages] || [self valueForKey:@"navigationGlassView"]) return;
-    for (UIBarButtonItem *item in self.navigationItem.rightBarButtonItems)
-        item.hidesSharedBackground = NO;
-}
 - (void)viewDidLayoutSubviews {
     %orig;
     [XHSNativeHelper extendTabPage:self];
@@ -454,6 +455,17 @@
 - (void)viewDidLayoutSubviews {
     %orig;
     [XHSNativeHelper extendTabPage:self];
+}
+%end
+
+%group Native
+
+%hook XYPMMessageCenterViewController
+- (void)configureNavigationBarLiquidGlass {
+    %orig;
+    if (![XHSNativeConfig.shared boolForKey:kXHSNativeGlassMessages] || [self valueForKey:@"navigationGlassView"]) return;
+    for (UIBarButtonItem *item in self.navigationItem.rightBarButtonItems)
+        item.hidesSharedBackground = NO;
 }
 %end
 
@@ -512,6 +524,8 @@
 }
 %end
 
+%end
+
 #pragma mark - 评论半屏
 
 %hook XYCommentHalfBar
@@ -520,7 +534,7 @@
     static char glassKey;
     for (UIView *input in [(UIView *)self subviews]) {
         if (![input isKindOfClass:objc_getClass("XYNoteBasic.CommentBarStaticViewV2024")]) continue;
-        UIVisualEffectView *glass = objc_getAssociatedObject(input, &glassKey);
+        UIView *glass = objc_getAssociatedObject(input, &glassKey);
         if (![XHSNativeConfig.shared boolForKey:kXHSNativeGlassComments]) { glass.hidden = YES; return; }
         for (UIView *content in input.subviews) {
             if (content == glass) continue;
@@ -545,8 +559,6 @@
     %orig;
     [XHSNativeHelper recenterAuthorRow:self];
 }
-%end
-
 %end
 
 // 双击图片：进大图并放大，不点赞
@@ -666,8 +678,6 @@
 }
 %end
 
-%group Glass
-
 // 关注按钮原来是红色描边的小药丸，放进玻璃里显得碎。去掉描边只留字，字稍微加重
 %hook XYFollowBtn
 
@@ -696,8 +706,6 @@
     %orig;
     [XHSNativeHelper layoutVideoEngage:self];
 }
-%end
-
 %end
 
 #pragma mark - 设置界面
@@ -805,21 +813,21 @@
           XYMainFrameLeftCache = objc_getClass("XYModuleInterface.MainFrameLeftCacheModel"),
           XYHomeDotsSwipeInstaller = objc_getClass("XYHomeModule.HomeDotsSwipeInstaller"),
           XYHomeService = objc_getClass("XYHomeModule.HomeServiceImp"),
+          XYMarketRootInterface = objc_getClass("XYShopping.MarketRootInterface"),
+          XYCommentHalfBar = objc_getClass("_TtCC12XYNoteModule32CommentHalflayerBottomController4View"),
+          XYNoteDetailPage = objc_getClass("XYNoteModule.NoteDetailPageInterface"),
+          XYNoteDirectionView = objc_getClass("XYNoteModule.NoteDirectionView"),
           XYNoteImageView = objc_getClass("XYNoteModule.NoteImageView"),
           XYImageSaveService = objc_getClass("XYNoteModule.ImageSaveService"),
-          XYCommentMediaSaveService = objc_getClass("XYNoteModule.CommentMediaSaveService"));
-    // 液态玻璃是 iOS 26 的东西，更早的系统只加载上面这些
+          XYCommentMediaSaveService = objc_getClass("XYNoteModule.CommentMediaSaveService"),
+          XYVFHeadView = objc_getClass("XYOldNoteModule.VFHeadView"),
+          XYVFBottomEngageView = objc_getClass("XYOldNoteModule.VFBottomEngageView"));
+    // 低系统的那一份在 XHSNativeLegacyHooks.xm 里加载
     if (![XHSNativeHelper supportsGlass]) return;
 
     [XHSNativeHelper patchOlderSystems];
-    %init(Glass,
+    %init(Native,
           XYChatBarLayout = objc_getClass("XYMessageUIKit.XYPMMessageShortcutBarLayoutViewController"),
-          XYCommentHalfBar = objc_getClass("_TtCC12XYNoteModule32CommentHalflayerBottomController4View"),
           XYNativeSearchBar = objc_getClass("XYSearchBar.XYSearchBarV2"),
-          XYDeviceUtility = objc_getClass("XYUIKit.DeviceUtility"),
-          XYMarketRootInterface = objc_getClass("XYShopping.MarketRootInterface"),
-          XYNoteDetailPage = objc_getClass("XYNoteModule.NoteDetailPageInterface"),
-          XYNoteDirectionView = objc_getClass("XYNoteModule.NoteDirectionView"),
-          XYVFHeadView = objc_getClass("XYOldNoteModule.VFHeadView"),
-          XYVFBottomEngageView = objc_getClass("XYOldNoteModule.VFBottomEngageView"));
+          XYDeviceUtility = objc_getClass("XYUIKit.DeviceUtility"));
 }
