@@ -15,6 +15,10 @@
 
 #pragma mark - 底栏
 
+// 底栏、顶栏和各页面的玻璃都是 iOS 26 的东西，放在 Glass 组里，只在 26 及以上加载
+
+%group Glass
+
 // 小红书的底栏是自己画的一条，盖在系统 UITabBar 上，再把系统的内容藏掉。
 // 这里反过来：藏掉它画的那条，放出系统的，用 UITab 重新排一遍，右侧加系统的搜索标签。
 // 页面、选中逻辑、角标仍然走小红书自己的，只是换了显示的那一层。
@@ -216,16 +220,15 @@
 
 %end
 
+%end
+
 #pragma mark - 首页顶栏
 
 // 内容延伸到顶栏后面，用系统的 soft 滚动边缘；右上角的搜索进了底栏，位置换成发布。
 // 下沉布局是小红书给折叠屏写好的，这里让普通机型也用上。
+// 频道的隐藏、排序、改名不依赖玻璃，各个系统都加载
 
 %hook XYMHomeViewController
-
-- (BOOL)homeLiquidGlassEnabled {
-    return YES;
-}
 
 - (NSUInteger)defaultLandingTabPage {
     return [XHSNativeHelper landingChannel:%orig ofHome:self];
@@ -237,6 +240,26 @@
 
 - (NSArray *)childViewModels {
     return [XHSNativeHelper visibleChannels:%orig];
+}
+
+%end
+
+%hook XYMHomeNaviBar
+
+- (void)layoutSubviews {
+    %orig;
+    if ([XHSNativeHelper supportsGlass]) [XHSNativeHelper layoutHomeBar:self];
+    else [XHSNativeHelper customizeChannelsOfBar:self];
+}
+
+%end
+
+%group Glass
+
+%hook XYMHomeViewController
+
+- (BOOL)homeLiquidGlassEnabled {
+    return YES;
 }
 
 %end
@@ -293,10 +316,7 @@
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [XHSNativeHelper attachVisibleList]; });
 }
 
-- (void)layoutSubviews {
-    %orig;
-    [XHSNativeHelper layoutHomeBar:self];
-}
+%end
 
 %end
 
@@ -383,6 +403,8 @@
 %end
 
 #pragma mark - 滚动联动
+
+%group Glass
 
 // UICollectionView / UITableView 各自重写了 didMoveToWindow，不一定走到 UIScrollView 的实现，三个都挂
 %hook UIScrollView
@@ -525,6 +547,8 @@
 }
 %end
 
+%end
+
 // 双击图片：进大图并放大，不点赞
 %hook XYNoteImageView
 - (void)browser:(id)browser doubleClickedAt:(NSInteger)index {
@@ -642,6 +666,8 @@
 }
 %end
 
+%group Glass
+
 // 关注按钮原来是红色描边的小药丸，放进玻璃里显得碎。去掉描边只留字，字稍微加重
 %hook XYFollowBtn
 
@@ -670,6 +696,8 @@
     %orig;
     [XHSNativeHelper layoutVideoEngage:self];
 }
+%end
+
 %end
 
 #pragma mark - 设置界面
@@ -772,28 +800,26 @@
 %end
 
 %ctor {
-    // 只在小红书里生效。重签名常会改包名，所以再认一下可执行文件名
-    NSBundle *bundle = NSBundle.mainBundle;
-    if (![bundle.bundleIdentifier hasPrefix:@"com.xingin.discover"] && ![[bundle objectForInfoDictionaryKey:@"CFBundleExecutable"] isEqual:@"discover"]) return;
-    // 液态玻璃是 iOS 26 的东西，更早的系统保持原样
-    if (NSProcessInfo.processInfo.operatingSystemVersion.majorVersion < 26) return;
-
-    [XHSNativeHelper patchOlderSystems];
-    %init(XYChatBarLayout = objc_getClass("XYMessageUIKit.XYPMMessageShortcutBarLayoutViewController"),
-          XYCommentHalfBar = objc_getClass("_TtCC12XYNoteModule32CommentHalflayerBottomController4View"),
-          XYNativeSearchBar = objc_getClass("XYSearchBar.XYSearchBarV2"),
-          XYDeviceUtility = objc_getClass("XYUIKit.DeviceUtility"),
-          XYMHomeDataSource = objc_getClass("XYHomeModule.XYMHomeDataSource"),
+    %init(XYMHomeDataSource = objc_getClass("XYHomeModule.XYMHomeDataSource"),
           XYMainFrameEntranceConfig = objc_getClass("XYHomeModule.MainFrameEntranceConfigManager"),
           XYMainFrameLeftCache = objc_getClass("XYModuleInterface.MainFrameLeftCacheModel"),
           XYHomeDotsSwipeInstaller = objc_getClass("XYHomeModule.HomeDotsSwipeInstaller"),
           XYHomeService = objc_getClass("XYHomeModule.HomeServiceImp"),
+          XYNoteImageView = objc_getClass("XYNoteModule.NoteImageView"),
+          XYImageSaveService = objc_getClass("XYNoteModule.ImageSaveService"),
+          XYCommentMediaSaveService = objc_getClass("XYNoteModule.CommentMediaSaveService"));
+    // 液态玻璃是 iOS 26 的东西，更早的系统只加载上面这些
+    if (![XHSNativeHelper supportsGlass]) return;
+
+    [XHSNativeHelper patchOlderSystems];
+    %init(Glass,
+          XYChatBarLayout = objc_getClass("XYMessageUIKit.XYPMMessageShortcutBarLayoutViewController"),
+          XYCommentHalfBar = objc_getClass("_TtCC12XYNoteModule32CommentHalflayerBottomController4View"),
+          XYNativeSearchBar = objc_getClass("XYSearchBar.XYSearchBarV2"),
+          XYDeviceUtility = objc_getClass("XYUIKit.DeviceUtility"),
           XYMarketRootInterface = objc_getClass("XYShopping.MarketRootInterface"),
           XYNoteDetailPage = objc_getClass("XYNoteModule.NoteDetailPageInterface"),
           XYNoteDirectionView = objc_getClass("XYNoteModule.NoteDirectionView"),
-          XYNoteImageView = objc_getClass("XYNoteModule.NoteImageView"),
-          XYImageSaveService = objc_getClass("XYNoteModule.ImageSaveService"),
-          XYCommentMediaSaveService = objc_getClass("XYNoteModule.CommentMediaSaveService"),
           XYVFHeadView = objc_getClass("XYOldNoteModule.VFHeadView"),
           XYVFBottomEngageView = objc_getClass("XYOldNoteModule.VFBottomEngageView"));
 }

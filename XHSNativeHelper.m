@@ -623,6 +623,13 @@ static char kBarEdgeKey, kSoftEdgeKey, kPublishKey, kSegmentGlassKey, kChannelTi
     if (![titles isEqualToArray:wanted]) [(id)segment setTitles:wanted];
 }
 
+// iOS 26 以下没有玻璃顶栏，只找出频道控件改名、藏红线
++ (void)customizeChannelsOfBar:(UIView *)bar {
+    XHSNativeConfig.shared.homeBar = bar;
+    for (UIView *view in bar.subviews)
+        if ([NSStringFromClass(view.class) isEqualToString:@"XYSegmentControl"]) return [self customizeChannels:view];
+}
+
 // 首页的频道页（关注 发现 同城）都由 childViewModels 提供，标题、分页、按频道找下标都从这里取，
 // 在这一处过滤就能整个藏掉，排序也在这里。全藏了就不过滤
 + (NSArray *)visibleChannels:(NSArray *)children {
@@ -1069,21 +1076,25 @@ static void darken(UIVisualEffectView *glass) {
 + (NSArray *)settingsRows {
     XHSNativeConfig *config = XHSNativeConfig.shared;
     NSMutableArray *rows = [NSMutableArray arrayWithObject:gap(12)];
-    [rows addObject:row(@"label", rowTitle(@"底部标签栏"), @"tabs.heading")];
-    [rows addObject:gap(8)];
-    // 每组里的行按文字从短到长排
-    for (NSString *name in @[@"me", @"shopping", @"message"])
-        [rows addObject:switchRow(tabTitles()[name], ![config isTabHidden:name], [@"tab." stringByAppendingString:name])];
-    [rows addObject:switchRow(@"搜索", [config boolForKey:kXHSNativeSearchTab], [@"pref." stringByAppendingString:kXHSNativeSearchTab])];
-    NSMutableArray<NSString *> *order = [NSMutableArray array];
-    for (NSString *name in config.tabOrder) [order addObject:tabTitles()[name]];
-    [rows addObject:row(@"arrow", with(rowTitle(@"标签顺序"), @"setTrailing", [order componentsJoinedByString:@" "]), @"order")];
-    [rows addObject:switchRow(@"滚动时收起", [config boolForKey:kXHSNativeMinimize], [@"pref." stringByAppendingString:kXHSNativeMinimize])];
-    [rows addObject:switchRow(@"显示底栏文字", config.isTabTitleShown, [@"pref." stringByAppendingString:kXHSNativeTabTitles])];
-    [rows addObject:switchRow(@"交换搜索与发布", config.isPublishSwapped, [@"pref." stringByAppendingString:kXHSNativeSwapPublish])];
-    [rows addObject:gap(8)];
-    [rows addObject:row(@"label", rowTitle(@"交换后，发布在底栏右侧，搜索回到首页顶栏。"), @"tabs.note")];
-    [rows addObject:gap(24)];
+    // 底栏、玻璃、不透明度只在 iOS 26 及以上有
+    BOOL glass = [self supportsGlass];
+    if (glass) {
+        [rows addObject:row(@"label", rowTitle(@"底部标签栏"), @"tabs.heading")];
+        [rows addObject:gap(8)];
+        // 每组里的行按文字从短到长排
+        for (NSString *name in @[@"me", @"shopping", @"message"])
+            [rows addObject:switchRow(tabTitles()[name], ![config isTabHidden:name], [@"tab." stringByAppendingString:name])];
+        [rows addObject:switchRow(@"搜索", [config boolForKey:kXHSNativeSearchTab], [@"pref." stringByAppendingString:kXHSNativeSearchTab])];
+        NSMutableArray<NSString *> *order = [NSMutableArray array];
+        for (NSString *name in config.tabOrder) [order addObject:tabTitles()[name]];
+        [rows addObject:row(@"arrow", with(rowTitle(@"标签顺序"), @"setTrailing", [order componentsJoinedByString:@" "]), @"order")];
+        [rows addObject:switchRow(@"滚动时收起", [config boolForKey:kXHSNativeMinimize], [@"pref." stringByAppendingString:kXHSNativeMinimize])];
+        [rows addObject:switchRow(@"显示底栏文字", config.isTabTitleShown, [@"pref." stringByAppendingString:kXHSNativeTabTitles])];
+        [rows addObject:switchRow(@"交换搜索与发布", config.isPublishSwapped, [@"pref." stringByAppendingString:kXHSNativeSwapPublish])];
+        [rows addObject:gap(8)];
+        [rows addObject:row(@"label", rowTitle(@"交换后，发布在底栏右侧，搜索回到首页顶栏。"), @"tabs.note")];
+        [rows addObject:gap(24)];
+    }
 
     [rows addObject:row(@"label", rowTitle(@"首页频道"), @"channels.heading")];
     [rows addObject:gap(8)];
@@ -1111,23 +1122,25 @@ static void darken(UIVisualEffectView *glass) {
     [rows addObject:row(@"label", rowTitle(@"禁用点点 AI 后重启小红书生效。\n双击放大的图片，再双击缩回。\n解除保存限制后，作者关闭了保存的笔记也能保存。"), @"features.note")];
     [rows addObject:gap(24)];
 
-    [rows addObject:row(@"label", rowTitle(@"液态玻璃"), @"glass.heading")];
-    [rows addObject:gap(8)];
-    for (NSArray *option in @[@[@"视频", kXHSNativeGlassVideo], @[@"搜索栏", kXHSNativeGlassSearch], @[@"图文笔记", kXHSNativeGlassNote],
-                              @[@"消息顶栏", kXHSNativeGlassMessages], @[@"评论输入栏", kXHSNativeGlassComments],
-                              @[@"私聊输入栏", kXHSNativeGlassChat], @[@"个人页顶栏", kXHSNativeGlassProfile]])
-        [rows addObject:switchRow(option[0], [config boolForKey:option[1]], [@"pref." stringByAppendingString:option[1]])];
-    [rows addObject:gap(8)];
-    [rows addObject:row(@"label", rowTitle(@"下次进入页面时生效。"), @"glass.note")];
-    [rows addObject:gap(24)];
+    if (glass) {
+        [rows addObject:row(@"label", rowTitle(@"液态玻璃"), @"glass.heading")];
+        [rows addObject:gap(8)];
+        for (NSArray *option in @[@[@"视频", kXHSNativeGlassVideo], @[@"搜索栏", kXHSNativeGlassSearch], @[@"图文笔记", kXHSNativeGlassNote],
+                                  @[@"消息顶栏", kXHSNativeGlassMessages], @[@"评论输入栏", kXHSNativeGlassComments],
+                                  @[@"私聊输入栏", kXHSNativeGlassChat], @[@"个人页顶栏", kXHSNativeGlassProfile]])
+            [rows addObject:switchRow(option[0], [config boolForKey:option[1]], [@"pref." stringByAppendingString:option[1]])];
+        [rows addObject:gap(8)];
+        [rows addObject:row(@"label", rowTitle(@"下次进入页面时生效。"), @"glass.note")];
+        [rows addObject:gap(24)];
 
-    [rows addObject:row(@"label", rowTitle(@"不透明度"), @"fillHeading")];
-    [rows addObject:gap(8)];
-    for (NSArray *bar in glassBars()) {
-        id title = with(rowTitle(bar[0]), @"setTrailing", [NSString stringWithFormat:@"%.0f%%", [config fillForBar:bar[1]]]);
-        [rows addObject:row(@"arrow", title, [@"fill." stringByAppendingString:bar[1]])];
+        [rows addObject:row(@"label", rowTitle(@"不透明度"), @"fillHeading")];
+        [rows addObject:gap(8)];
+        for (NSArray *bar in glassBars()) {
+            id title = with(rowTitle(bar[0]), @"setTrailing", [NSString stringWithFormat:@"%.0f%%", [config fillForBar:bar[1]]]);
+            [rows addObject:row(@"arrow", title, [@"fill." stringByAppendingString:bar[1]])];
+        }
+        [rows addObject:gap(24)];
     }
-    [rows addObject:gap(24)];
     [rows addObject:row(@"button", rowTitle(@"恢复默认"), @"reset")];
     return rows;
 }
@@ -1278,6 +1291,12 @@ static void darken(UIVisualEffectView *glass) {
 + (void)applySettings {
     [self rebuildTabs];
     [XHSNativeConfig.shared.homeBar setNeedsLayout];
+}
+
+#pragma mark - 系统版本
+
++ (BOOL)supportsGlass {
+    return NSProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26;
 }
 
 #pragma mark - iOS 27.1 以下

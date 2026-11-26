@@ -48,6 +48,7 @@
 + (void)stripBarBackground:(XYMHomeNaviBar *)bar;
 + (void)layoutHomeBar:(XYMHomeNaviBar *)bar;
 + (void)customizeChannels:(UIView *)segment;
++ (void)customizeChannelsOfBar:(UIView *)bar;
 + (NSArray *)visibleChannels:(NSArray *)children;
 + (NSUInteger)landingChannel:(NSUInteger)page ofHome:(XYMHomeViewController *)home;
 + (NSString *)leftEntranceType:(NSString *)type;
@@ -82,6 +83,10 @@
 + (void)handleTap:(NSString *)identity onPage:(XHSNativeSettingsPage *)page;
 + (void)handleSwitch:(NSString *)identity on:(BOOL)on;
 + (void)applySettings;
+
+#pragma mark - 系统版本
+
++ (BOOL)supportsGlass;
 
 #pragma mark - iOS 27.1 以下
 
