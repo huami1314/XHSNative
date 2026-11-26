@@ -171,6 +171,8 @@
 @end
 
 @interface XYVFVideoDownloaderManager : NSObject
+- (void)showSaveSuccess;
+- (void)showSaveFail:(NSString *)message;  // nil 时是默认的「保存失败，请重试」
 @end
 
 // 笔记的功能开关，image_download、video_download 不可用时保存按钮置灰，提示作者关闭了下载

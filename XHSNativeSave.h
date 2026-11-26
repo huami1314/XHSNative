@@ -19,4 +19,9 @@
 + (BOOL)saveCommentLivePhotoWithCommentId:(NSString *)commentId videoId:(NSString *)videoId imageURL:(NSString *)imageURL;
 + (BOOL)saveCommentImageWithURL:(NSString *)url completion:(void (^)(BOOL success))completion;
 
+// 视频流里左右滑的图集笔记：屏幕中间这篇的图集视图，不是图集返回 nil
++ (UIView *)slidesOfNote:(NSString *)noteId;
+// 存当前这一张或全部，实况存成实况，静态图存原图。completion 在主线程
++ (void)saveSlides:(UIView *)slides all:(BOOL)all completion:(void (^)(BOOL success))completion;
+
 @end

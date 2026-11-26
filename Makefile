@@ -32,7 +32,7 @@ PACKAGE_VERSION = $(RELEASE_VERSION)
 XHSNative_FILES = XHSNative.xm XHSNativeLegacyHooks.xm XHSNativeHelper.m XHSNativeConfig.m XHSNativeSave.m XHSNativeLegacy.m XHSNativeViewState.m Artwork.S
 XHSNative_CFLAGS = -fobjc-arc -w
 XHSNative_STRIP_FLAGS = -x
-XHSNative_FRAMEWORKS = UIKit QuartzCore Photos
+XHSNative_FRAMEWORKS = UIKit QuartzCore Photos AVFoundation CoreMedia ImageIO
 XHSNative_LDFLAGS = -Wl,-install_name,@rpath/XHSNative.dylib
 XHSNative_LOGOS_DEFAULT_GENERATOR = internal
 

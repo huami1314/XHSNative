@@ -576,144 +576,6 @@
 
 #pragma mark - 无水印保存
 
-#pragma mark 多实况图集：把"保存成视频"改回逐张实况
-
-// 9.35 的多实况图集笔记（ImageSlidesCollection）点保存时不会走 ImageSaveService，
-// 而是直接进 XYVFVideoDownloaderManager 存视频。这里解析笔记 JSON 里每张的
-// 原图 + 实况视频地址，按当前页码取对应条目，交给 App 自带的 MediaMessageHandler
-// 原生存成 Live Photo。
-
-static NSMutableArray *XN_LiveEntries = nil;
-static time_t XN_LiveEntriesAt = 0;
-static NSString *XN_LiveNoteId = nil;
-static NSMutableArray *XN_AliveHandlers = nil;
-
-static NSString *XN_Str(id d, NSArray *keys) {
-    if (![d isKindOfClass:[NSDictionary class]]) return nil;
-    for (NSString *k in keys) {
-        id v = ((NSDictionary *)d)[k];
-        if ([v isKindOfClass:[NSString class]] && [(NSString *)v length]) return v;
-    }
-    return nil;
-}
-
-static NSDictionary *XN_FindNoteDict(id obj, int depth) {
-    if (!obj || depth > 8) return nil;
-    if ([obj isKindOfClass:[NSDictionary class]]) {
-        NSDictionary *d = (NSDictionary *)obj;
-        if ([d[@"images_list"] isKindOfClass:[NSArray class]]) return d;
-        for (id v in d.allValues) {
-            NSDictionary *r = XN_FindNoteDict(v, depth + 1);
-            if (r) return r;
-        }
-    } else if ([obj isKindOfClass:[NSArray class]]) {
-        for (id v in (NSArray *)obj) {
-            NSDictionary *r = XN_FindNoteDict(v, depth + 1);
-            if (r) return r;
-        }
-    }
-    return nil;
-}
-
-static void XN_IngestNoteJSON(id result) {
-    NSDictionary *note = XN_FindNoteDict(result, 0);
-    if (!note) return;
-    NSArray *list = note[@"images_list"];
-    NSMutableArray *entries = [NSMutableArray array];
-    for (NSUInteger i = 0; i < list.count; i++) {
-        id item = list[i];
-        if (![item isKindOfClass:[NSDictionary class]]) continue;
-        NSDictionary *lp = ((NSDictionary *)item)[@"live_photo"];
-        if (![lp isKindOfClass:[NSDictionary class]]) continue;
-        NSString *img = XN_Str(item, @[@"url", @"original", @"url_size_large"]);
-        NSString *video = nil;
-        @try {
-            NSArray *h265 = lp[@"media"][@"stream"][@"h265"];
-            if (h265.count) video = XN_Str(h265[0], @[@"master_url"]);
-        } @catch (NSException *e) { }
-        if (img.length && video.length) {
-            [entries addObject:@{@"index": @(i), @"image": img, @"video": video}];
-        }
-    }
-    if (entries.count) {
-        XN_LiveEntries = entries;
-        XN_LiveEntriesAt = time(NULL);
-        XN_LiveNoteId = [XN_Str(note, @[@"id", @"note_id", @"noteId"]) copy];
-    }
-}
-
-static NSInteger XN_PageScan(UIView *v, int depth) {
-    if (!v || depth > 12) return -1;
-    NSString *cls = NSStringFromClass(v.class);
-    if ([v isKindOfClass:[UIPageControl class]]) {
-        UIPageControl *pc = (UIPageControl *)v;
-        if (pc.numberOfPages > 1 && !pc.hidden && pc.alpha > 0.01) return pc.currentPage;
-    }
-    if ([v isKindOfClass:[UIScrollView class]]) {
-        UIScrollView *sv = (UIScrollView *)v;
-        if (sv.pagingEnabled && sv.bounds.size.width > 1 && sv.contentSize.width > sv.bounds.size.width * 1.2) {
-            // 只认多实况图集的横向分页容器，避免误伤视频页
-            if ([cls containsString:@"ImageSlides"] || [cls containsString:@"SlidesCollection"]) {
-                return (NSInteger)llround(sv.contentOffset.x / sv.bounds.size.width);
-            }
-        }
-    }
-    for (UIView *s in v.subviews) {
-        NSInteger r = XN_PageScan(s, depth + 1);
-        if (r >= 0) return r;
-    }
-    return -1;
-}
-
-static NSInteger XN_PageIndex(void) {
-    NSInteger idx = -1;
-    for (UIWindow *w in [UIApplication sharedApplication].windows) {
-        idx = XN_PageScan(w, 0);
-        if (idx >= 0) break;
-    }
-    return idx;
-}
-
-%hook NSJSONSerialization
-+ (id)JSONObjectWithData:(NSData *)data options:(NSJSONReadingOptions)opt error:(NSError **)error {
-    id result = %orig;
-    @try { XN_IngestNoteJSON(result); } @catch (NSException *e) { }
-    return result;
-}
-%end
-
-// 多实况图集的保存：拦截视频保存，改存当前那张的 Live Photo
-%hook XYVFVideoDownloaderManager
-- (void)saveVideoToAlbumWithUrl:(NSString *)url {
-    @try {
-        if (XHSNativeConfig.shared.isNoWatermarkEnabled && XN_LiveEntries.count &&
-            (time(NULL) - XN_LiveEntriesAt) < 300) {
-            NSInteger idx = XN_PageIndex();
-            if (idx >= 0 && idx < (NSInteger)XN_LiveEntries.count) {
-                NSDictionary *entry = XN_LiveEntries[(NSUInteger)idx];
-                NSString *img = entry[@"image"];
-                NSString *vid = entry[@"video"];
-                Class handlerClass = objc_getClass("_TtC14XYMessageUIKit19MediaMessageHandler");
-                id handler = handlerClass ? [[handlerClass alloc] init] : nil;
-                SEL sel = NSSelectorFromString(@"saveLivePhotoWithImageUrl:videoUrl:");
-                if (handler && [handler respondsToSelector:sel] && img.length && vid.length) {
-                    if (!XN_AliveHandlers) XN_AliveHandlers = [NSMutableArray array];
-                    [XN_AliveHandlers addObject:handler];
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(180 * NSEC_PER_SEC)),
-                                   dispatch_get_main_queue(), ^{ [XN_AliveHandlers removeObject:handler]; });
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        ((void (*)(id, SEL, id, id))objc_msgSend)(handler, sel, img, vid);
-                    });
-                    return;
-                }
-            }
-        }
-    } @catch (NSException *e) { }
-    %orig;
-}
-%end
-
-
 // 小红书保存别人的笔记时，图片在本地画水印，视频和实况等服务器渲染带水印的版本；
 // 笔记保存配置的 disableWatermark 为真时（自己的笔记就是这样）直接存原图、原视频。
 // disableSave 是作者关闭了保存，分享面板、长按、视频保存都看它。保存仍然走小红书自己的按钮
@@ -741,6 +603,36 @@ static NSInteger XN_PageIndex(void) {
 %hook XYVFVideoDownloaderManager
 - (BOOL)disableWatermark {
     return XHSNativeConfig.shared.isNoWatermarkEnabled || %orig;
+}
+
+// 视频流里左右滑的图集笔记，保存的是服务器把整组拼成的一段视频。先问存哪种：
+// 当前这张、全部图片（实况存实况，静态图存原图），或者照原来存成视频
+- (void)download:(NSString *)url noteId:(NSString *)noteId videoDuration:(NSInteger)duration {
+    UIView *slides = XHSNativeConfig.shared.isNoWatermarkEnabled ? [XHSNativeSave slidesOfNote:noteId] : nil;
+    UIWindow *window = slides.window;
+    if (!window) return %orig;
+
+    void (^done)(BOOL) = ^(BOOL success) {
+        if (success) [self showSaveSuccess];
+        else [self showSaveFail:nil];
+    };
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存" message:nil preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"下载当前图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [XHSNativeSave saveSlides:slides all:NO completion:done];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"下载所有图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [XHSNativeSave saveSlides:slides all:YES completion:done];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"保存为视频" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        %orig;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    // 保存是从长按面板点进来的，面板这时正在收起，等它收完再从最上层的页面弹
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIViewController *top = window.rootViewController;
+        while (top.presentedViewController && !top.presentedViewController.isBeingDismissed) top = top.presentedViewController;
+        [top presentViewController:alert animated:YES completion:nil];
+    });
 }
 %end
 

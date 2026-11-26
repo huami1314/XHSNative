@@ -17,6 +17,7 @@
 + (void)clearBackground:(UIView *)view;
 + (BOOL)isVisible:(UIView *)view;
 + (UIView *)subviewOf:(UIView *)view named:(NSString *)className;
++ (UIViewController *)viewControllerOf:(UIView *)view;  // 视图所在的页面
 
 #pragma mark - 小红书
 

@@ -314,6 +314,12 @@ static NSArray<NSArray *> *glassBars(void) {
     return nil;
 }
 
++ (UIViewController *)viewControllerOf:(UIView *)view {
+    UIResponder *responder = view;
+    while (responder && ![responder isKindOfClass:UIViewController.class]) responder = responder.nextResponder;
+    return (UIViewController *)responder;
+}
+
 #pragma mark - 小红书
 
 // 这几个方法调用得很频繁，直接和主程序代码段的地址范围比
