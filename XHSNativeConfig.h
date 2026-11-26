@@ -7,7 +7,7 @@
 //
 #import <UIKit/UIKit.h>
 
-#define XHSNativeVersion @"1.6(11270148)"
+#define XHSNativeVersion @"1.7(11270234)"
 
 @class XYTabbarController;
 
