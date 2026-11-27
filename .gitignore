@@ -2,5 +2,6 @@
 packages
 .DS_Store
 Makefile.local
+.xcode.env.local
 .toolchain/
 HANDOFF.md

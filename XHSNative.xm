@@ -617,10 +617,10 @@
         else [self showSaveFail:nil];
     };
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存" message:nil preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"下载当前图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"保存当前图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [XHSNativeSave saveSlides:slides all:NO completion:done];
     }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"下载所有图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"保存所有图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [XHSNativeSave saveSlides:slides all:YES completion:done];
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"保存为视频" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
@@ -633,6 +633,17 @@
         while (top.presentedViewController && !top.presentedViewController.isBeingDismissed) top = top.presentedViewController;
         [top presentViewController:alert animated:YES completion:nil];
     });
+}
+
+// 9.35 的原生“保存到相册”不走上面的 download:，而是直接进这里。
+// 屏幕中间正好是多实况图集时，按当前页存成 Live Photo，不再让服务器拼成视频。
+- (void)saveVideoToAlbumWithUrl:(NSString *)url {
+    UIView *slides = XHSNativeConfig.shared.isNoWatermarkEnabled ? [XHSNativeSave visibleSlides] : nil;
+    if (!slides) return %orig;
+    [XHSNativeSave saveSlides:slides all:NO completion:^(BOOL success) {
+        if (success) [self showSaveSuccess];
+        else [self showSaveFail:nil];
+    }];
 }
 %end
 

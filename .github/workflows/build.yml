@@ -47,6 +47,9 @@ jobs:
           make -j"$(sysctl -n hw.ncpu)" TARGET_CODESIGN=codesign TARGET_CODESIGN_FLAGS="-s -"
           xcrun lipo packages/XHSNative-*.dylib -verify_arch arm64
 
+      - name: Test
+        run: tests/run-tests.sh
+
       - name: Build deb
         run: |
           command -v dpkg-deb >/dev/null || brew install dpkg

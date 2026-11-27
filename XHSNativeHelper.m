@@ -1381,8 +1381,9 @@ static void darken(UIView *glass) {
 #pragma mark - 系统版本
 
 + (BOOL)supportsGlass {
-    if (@available(iOS 26.0, *)) return YES;
-    return NO;
+    // 这里不用 @available：Theos 的 iOS 26 SDK 没有导出 ___isPlatformVersionAtLeast，
+    // 链接会失败；运行时版本判断效果一样
+    return NSProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26;
 }
 
 #pragma mark - iOS 27.1 以下
