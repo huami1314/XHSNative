@@ -65,8 +65,7 @@ static void testRestoration(void) {
 static void testConfig(void) {
     NSString *suite = [@"XHSNative.tests." stringByAppendingString:NSUUID.UUID.UUIDString];
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:suite];
-    Method getter = class_getClassMethod(NSUserDefaults.class, @selector(standardUserDefaults));
-    IMP original = method_setImplementation(getter, imp_implementationWithBlock(^id { return defaults; }));
+    [XHSNativeConfig setDefaults:defaults];
     XHSNativeConfig *config = XHSNativeConfig.shared;
     NSArray *keys = @[kXHSNativeSearchTab, kXHSNativeMinimize, kXHSNativeGlassNote,
                       kXHSNativeGlassSearch, kXHSNativeGlassComments, kXHSNativeGlassProfile,
@@ -74,6 +73,18 @@ static void testConfig(void) {
     // 与上游一致：功能子开关默认开启，特殊行为开关默认关闭
     for (NSString *key in keys) assert([config boolForKey:key]);
     assert(!config.isDotsDisabled && !config.isPublishSwapped && !config.isDoubleTapZoomEnabled);
+    assert(!config.isNoWatermarkEnabled && !config.isSaveRestrictionIgnored);
+    [config setBool:YES forKey:kXHSNativeNoWatermark];
+    assert(config.isNoWatermarkEnabled);
+    [config setBool:NO forKey:kXHSNativeNoWatermark];
+    assert(!config.isNoWatermarkEnabled);
+    [config setBool:YES forKey:kXHSNativeIgnoreNoSave];
+    assert(config.isSaveRestrictionIgnored);
+    [config setBool:NO forKey:kXHSNativeIgnoreNoSave];
+    assert(!config.isSaveRestrictionIgnored);
+    [defaults synchronize];
+    assert(![XHSNativeConfig.shared isNoWatermarkEnabled]);
+    assert(![XHSNativeConfig.shared isSaveRestrictionIgnored]);
     [config setBool:NO forKey:kXHSNativeGlassVideo];
     assert(![config boolForKey:kXHSNativeGlassVideo]);
     assert([config boolForKey:kXHSNativeGlassSearch]);
@@ -89,7 +100,7 @@ static void testConfig(void) {
     [config setChannel:1 hidden:YES];
     assert([config isTabHidden:@"me"] && [config isChannelHidden:1]);
     [defaults removePersistentDomainForName:suite];
-    method_setImplementation(getter, original);
+    [XHSNativeConfig setDefaults:NSUserDefaults.standardUserDefaults];
 }
 
 int main(void) {

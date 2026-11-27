@@ -228,7 +228,8 @@ static id withFlag(id object, NSString *name, BOOL value) {
 
 static id row(NSString *kind, id title, NSString *identity) {
     id (^make)(id) = blockOf(objc_getClass("StandardOption"), kind);
-    return with(make(title), @"setIdentity", identity);
+    id result = make(title);
+    return with(result, @"setIdentity", identity);
 }
 
 static id gap(CGFloat height) {
@@ -1372,7 +1373,28 @@ static void darken(UIView *glass) {
     [self applySettings];
 }
 
++ (NSString *)identityForSwitch:(id)control inPage:(id)page {
+    UIView *view = [control isKindOfClass:UIView.class] ? control : nil;
+    while (view && ![view isKindOfClass:UITableViewCell.class]) view = view.superview;
+    UITableViewCell *cell = [view isKindOfClass:UITableViewCell.class] ? (UITableViewCell *)view : nil;
+    UITableView *table = cell.superview;
+    while (table && ![table isKindOfClass:UITableView.class]) table = (UITableView *)table.superview;
+    if (!table) return nil;
+    NSIndexPath *path = [table indexPathForCell:cell];
+    if (!path) return nil;
+    NSArray *options = nil;
+    @try { options = [[page valueForKey:@"vm"] valueForKey:@"options"]; }
+    @catch (NSException *exception) {}
+    if (![options isKindOfClass:NSArray.class]) options = [self settingsRows];
+    if (path.row >= (NSInteger)options.count) return nil;
+    id option = options[path.row];
+    id identity = nil;
+    @try { identity = [option valueForKey:@"identity"]; } @catch (NSException *exception) {}
+    return [identity isKindOfClass:NSString.class] ? identity : nil;
+}
+
 + (void)applySettings {
+    [NSUserDefaults.standardUserDefaults synchronize];
     [self rebuildTabs];
     [XHSNativeConfig.shared.homeBar setNeedsLayout];
     if (![self supportsGlass]) [XHSNativeLegacy applyLegacySettings];

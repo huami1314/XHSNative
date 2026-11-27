@@ -85,6 +85,7 @@
 + (UIView *)settingsFooterWithWidth:(CGFloat)width;
 + (void)handleTap:(NSString *)identity onPage:(XHSNativeSettingsPage *)page;
 + (void)handleSwitch:(NSString *)identity on:(BOOL)on;
++ (NSString *)identityForSwitch:(id)control inPage:(id)page;
 + (void)applySettings;
 
 #pragma mark - 系统版本

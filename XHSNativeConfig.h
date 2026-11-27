@@ -43,6 +43,7 @@ extern NSString *const kXHSNativeBarSearch;
 @interface XHSNativeConfig : NSObject
 
 + (instancetype)shared;
++ (void)setDefaults:(NSUserDefaults *)defaults;
 
 #pragma mark - 运行时状态（不落盘）
 

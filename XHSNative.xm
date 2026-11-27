@@ -822,9 +822,17 @@
 
 // 开关拨动。两个参数一个是这一行的选项，一个是带开关的单元格
 - (void)didChangeValueFor:(id)first related:(id)second {
-    id option = [first respondsToSelector:NSSelectorFromString(@"identity")] ? first : second;
-    id cell = option == first ? second : first;
-    [XHSNativeHelper handleSwitch:[option valueForKey:@"identity"] on:[[cell valueForKey:@"isOn"] boolValue]];
+    id option = [first isKindOfClass:objc_getClass("StandardOption")] ? first :
+                ([second isKindOfClass:objc_getClass("StandardOption")] ? second : nil);
+    id control = option == first ? second : first;
+    NSString *identity = [XHSNativeHelper identityForSwitch:control inPage:self];
+    if (!identity.length) return;
+    BOOL on = [[control valueForKey:@"isOn"] boolValue];
+    [XHSNativeHelper handleSwitch:identity on:on];
+    if ([self respondsToSelector:NSSelectorFromString(@"reloadRows")]) {
+        SEL reload = NSSelectorFromString(@"reloadRows");
+        ((void (*)(id, SEL))objc_msgSend)(self, reload);
+    }
 }
 
 %end
