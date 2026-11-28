@@ -308,7 +308,9 @@ static BOOL hasAudibleAudio(NSURL *file) {
     [reader addOutput:output];
     if (![reader startReading]) return NO;
     BOOL audible = NO;
-    NSInteger channels = MAX((NSInteger)track.naturalSize.width, 1);
+    CMFormatDescriptionRef format = (__bridge CMFormatDescriptionRef)track.formatDescriptions.firstObject;
+    const AudioStreamBasicDescription *description = format ? CMAudioFormatDescriptionGetStreamBasicDescription(format) : NULL;
+    NSInteger channels = description && description->mChannelsPerFrame > 0 ? description->mChannelsPerFrame : 1;
     NSInteger samples = 0;
     while (!audible && samples < audioSampleRate(track)) {
         CMSampleBufferRef sampleBuffer = [output copyNextSampleBuffer];
@@ -579,17 +581,16 @@ static UIView *findVisibleSlides(UIView *view, Class slidesClass) {
             if (!next && [top isKindOfClass:UITabBarController.class]) {
                 next = ((UITabBarController *)top).selectedViewController;
             }
-            if (!next || next == top) break;
-            if (next.isBeingDismissed) return;
+            if (!next || next == top || next.isBeingDismissed) break;
             top = next;
         }
         if (!top.viewIfLoaded.window || [top isKindOfClass:UIAlertController.class]) return;
 
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存" message:nil preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"保存当前图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"下载当前图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
             saveCurrent();
         }]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"保存所有图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"下载所有图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
             saveAll();
         }]];
         if (saveVideo) {

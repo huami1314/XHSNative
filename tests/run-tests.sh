@@ -17,9 +17,6 @@ xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -Wno-unused-parameter 
 
 afconvert /System/Library/Sounds/Ping.aiff "$test_dir/ping.m4a" -f m4af -d aac -b 64000
 fixture="${XHSNATIVE_AUDIO_TEST_VIDEO:-}"
-if [ -z "$fixture" ] && [ -f "$project_dir/../work/lp-native/latest.mp4" ]; then
-    fixture="$project_dir/../work/lp-native/latest.mp4"
-fi
 if [ -z "$fixture" ]; then
     ffmpeg_bin="${FFMPEG:-$(command -v ffmpeg || true)}"
     if [ -n "$ffmpeg_bin" ]; then

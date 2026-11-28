@@ -246,7 +246,7 @@
 // 内容延伸到顶栏后面，用系统的 soft 滚动边缘；右上角的搜索进了底栏，位置换成发布。
 // 下沉布局是小红书给折叠屏写好的，这里让普通机型也用上。
 
-%group Layout
+// 频道的隐藏、排序、改名不依赖玻璃，禁用液态玻璃时也加载
 
 %hook XYMHomeViewController
 
@@ -268,6 +268,18 @@
 
 %hook XYMHomeNaviBar
 
+- (void)layoutSubviews {
+    %orig;
+    if ([XHSNativeHelper isLayoutEnabledForCurrentLaunch]) [XHSNativeHelper layoutHomeBar:self];
+    else [XHSNativeHelper customizeChannelsOfBar:self];
+}
+
+%end
+
+%group Layout
+
+%hook XYMHomeNaviBar
+
 - (void)homeThemeChanged {
     %orig;
     [XHSNativeHelper stripBarBackground:self];
@@ -279,11 +291,6 @@
     [XHSNativeHelper attachVisibleList];
     // 翻页动画结束后列表才完全到位，再接一次
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [XHSNativeHelper attachVisibleList]; });
-}
-
-- (void)layoutSubviews {
-    %orig;
-    [XHSNativeHelper layoutHomeBar:self];
 }
 
 %end
@@ -703,6 +710,8 @@ static BOOL offerSlideSaveOptions(UIView *slides, void (^completion)(BOOL), disp
     } saveVideo:saveVideo];
 }
 
+static char kAskedKey;
+
 // 视频下载器自己也记着这个值，不去水印时会轮询服务器拿渲染好的带水印视频
 %hook XYVFVideoDownloaderManager
 - (BOOL)disableWatermark {
@@ -712,6 +721,8 @@ static BOOL offerSlideSaveOptions(UIView *slides, void (^completion)(BOOL), disp
 // 视频流里左右滑的图集笔记，保存的是服务器把整组拼成的一段视频。先问存哪种：
 // 当前这张、全部图片（实况存实况，静态图存原图），或者照原来存成视频
 - (void)download:(NSString *)url noteId:(NSString *)noteId videoDuration:(NSInteger)duration {
+    // 9.55 的保存先进这里，已经问过了，后面的 saveVideoToAlbumWithUrl: 不再问
+    objc_setAssociatedObject(self, &kAskedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     UIView *slides = XHSNativeConfig.shared.isNoWatermarkEnabled ? [XHSNativeSave slidesOfNote:noteId] : nil;
     dispatch_block_t saveVideo = ^{
         %orig;
@@ -719,9 +730,10 @@ static BOOL offerSlideSaveOptions(UIView *slides, void (^completion)(BOOL), disp
     if (!offerSlideSaveOptions(slides, slideSaveCompletion(self), saveVideo)) %orig;
 }
 
-// 9.35 的原生“保存到相册”不走上面的 download:，而是直接进这里。
+// 9.35 的保存不走上面的 download:，下载完直接进这里
 - (void)saveVideoToAlbumWithUrl:(NSString *)url {
-    UIView *slides = XHSNativeConfig.shared.isNoWatermarkEnabled ? [XHSNativeSave visibleSlides] : nil;
+    BOOL asked = [objc_getAssociatedObject(self, &kAskedKey) boolValue];
+    UIView *slides = !asked && XHSNativeConfig.shared.isNoWatermarkEnabled ? [XHSNativeSave visibleSlides] : nil;
     if (!slides) return %orig;
     void (^done)(BOOL) = slideSaveCompletion(self);
     if (![XHSNativeSave isMultipleImageSlides:slides]) {
@@ -940,18 +952,15 @@ static BOOL offerSlideSaveOptions(UIView *slides, void (^completion)(BOOL), disp
 }
 
 // 开关拨动。两个参数一个是这一行的选项，一个是带开关的单元格
+// 单元格自己也响应 identity，要按类认出选项；认不出就按开关所在的行找
 - (void)didChangeValueFor:(id)first related:(id)second {
-    id option = [first isKindOfClass:objc_getClass("StandardOption")] ? first :
-                ([second isKindOfClass:objc_getClass("StandardOption")] ? second : nil);
+    Class optionClass = objc_getClass("StandardOption");
+    id option = [first isKindOfClass:optionClass] ? first : ([second isKindOfClass:optionClass] ? second : nil);
     id control = option == first ? second : first;
-    NSString *identity = [XHSNativeHelper identityForSwitch:control inPage:self];
+    NSString *identity = [option valueForKey:@"identity"];
+    if (![identity isKindOfClass:NSString.class] || !identity.length) identity = [XHSNativeHelper identityForSwitch:control inPage:self];
     if (!identity.length) return;
-    BOOL on = [[control valueForKey:@"isOn"] boolValue];
-    [XHSNativeHelper handleSwitch:identity on:on];
-    if ([self respondsToSelector:NSSelectorFromString(@"reloadRows")]) {
-        SEL reload = NSSelectorFromString(@"reloadRows");
-        ((void (*)(id, SEL))objc_msgSend)(self, reload);
-    }
+    [XHSNativeHelper handleSwitch:identity on:[[control valueForKey:@"isOn"] boolValue]];
 }
 
 %end
@@ -981,7 +990,8 @@ static BOOL offerSlideSaveOptions(UIView *slides, void (^completion)(BOOL), disp
 %end
 
 %ctor {
-    %init(XYMainFrameEntranceConfig = objc_getClass("XYHomeModule.MainFrameEntranceConfigManager"),
+    %init(XYMHomeDataSource = objc_getClass("XYHomeModule.XYMHomeDataSource"),
+          XYMainFrameEntranceConfig = objc_getClass("XYHomeModule.MainFrameEntranceConfigManager"),
           XYMainFrameLeftCache = objc_getClass("XYModuleInterface.MainFrameLeftCacheModel"),
           XYHomeDotsSwipeInstaller = objc_getClass("XYHomeModule.HomeDotsSwipeInstaller"),
           XYHomeService = objc_getClass("XYHomeModule.HomeServiceImp"),
@@ -991,7 +1001,6 @@ static BOOL offerSlideSaveOptions(UIView *slides, void (^completion)(BOOL), disp
     if (![XHSNativeHelper isLayoutEnabledForCurrentLaunch]) return;
 
     %init(Layout,
-          XYMHomeDataSource = objc_getClass("XYHomeModule.XYMHomeDataSource"),
           XYMarketRootInterface = objc_getClass("XYShopping.MarketRootInterface"),
           XYCommentHalfBar = objc_getClass("_TtCC12XYNoteModule32CommentHalflayerBottomController4View"),
           XYNoteDetailPage = objc_getClass("XYNoteModule.NoteDetailPageInterface"),

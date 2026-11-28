@@ -65,7 +65,9 @@ static BOOL hasAudibleAudio(NSURL *file) {
     [reader addOutput:output];
     if (![reader startReading]) return NO;
     BOOL audible = NO;
-    NSInteger channels = MAX((NSInteger)track.naturalSize.width, 1);
+    CMFormatDescriptionRef format = (__bridge CMFormatDescriptionRef)track.formatDescriptions.firstObject;
+    const AudioStreamBasicDescription *description = format ? CMAudioFormatDescriptionGetStreamBasicDescription(format) : NULL;
+    NSInteger channels = description && description->mChannelsPerFrame > 0 ? description->mChannelsPerFrame : 1;
     NSInteger samples = 0;
     while (!audible && samples < audioSampleRate(track)) {
         CMSampleBufferRef sampleBuffer = [output copyNextSampleBuffer];

@@ -52,6 +52,7 @@
 + (void)stripBarBackground:(XYMHomeNaviBar *)bar;
 + (void)layoutHomeBar:(XYMHomeNaviBar *)bar;
 + (void)customizeChannels:(UIView *)segment;
++ (void)customizeChannelsOfBar:(UIView *)bar;
 + (NSArray *)visibleChannels:(NSArray *)children;
 + (NSUInteger)landingChannel:(NSUInteger)page ofHome:(XYMHomeViewController *)home;
 + (NSString *)leftEntranceType:(NSString *)type;
@@ -85,7 +86,7 @@
 + (UIView *)settingsFooterWithWidth:(CGFloat)width;
 + (void)handleTap:(NSString *)identity onPage:(XHSNativeSettingsPage *)page;
 + (void)handleSwitch:(NSString *)identity on:(BOOL)on;
-+ (NSString *)identityForSwitch:(id)control inPage:(id)page;
++ (NSString *)identityForSwitch:(id)control inPage:(XHSNativeSettingsPage *)page;
 + (void)applySettings;
 
 #pragma mark - 系统版本

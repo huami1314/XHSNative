@@ -17,7 +17,7 @@ NSString *const kXHSNativeMinimize = @"XHSNative.minimize";
 NSString *const kXHSNativeDisableDots = @"XHSNative.disableDots";
 NSString *const kXHSNativeNoWatermark = @"XHSNative.noWatermark";
 NSString *const kXHSNativeIgnoreNoSave = @"XHSNative.ignoreNoSave";
-NSString *const kXHSNativeNativeLayoutEnabled = @"XHSNative.nativeLayout";
+NSString *const kXHSNativeDisableGlass = @"XHSNative.disableGlass";
 NSString *const kXHSNativeGlassNote = @"XHSNative.glass.note";
 NSString *const kXHSNativeGlassSearch = @"XHSNative.glass.search";
 NSString *const kXHSNativeGlassComments = @"XHSNative.glass.comments";
@@ -100,8 +100,8 @@ static NSString *const kTabTitleSize = @"XHSNative.tabTitleSize";
     return [[[self class] defaults] boolForKey:kXHSNativeDoubleTapZoom];
 }
 
-- (BOOL)isNativeLayoutEnabled {
-    return [self boolForKey:kXHSNativeNativeLayoutEnabled];
+- (BOOL)isGlassDisabled {
+    return [[[self class] defaults] boolForKey:kXHSNativeDisableGlass];
 }
 
 - (void)setBool:(BOOL)value forKey:(NSString *)key {
