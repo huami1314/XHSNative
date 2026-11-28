@@ -228,7 +228,8 @@ static id withFlag(id object, NSString *name, BOOL value) {
 
 static id row(NSString *kind, id title, NSString *identity) {
     id (^make)(id) = blockOf(objc_getClass("StandardOption"), kind);
-    return with(make(title), @"setIdentity", identity);
+    id result = make(title);
+    return with(result, @"setIdentity", identity);
 }
 
 static id gap(CGFloat height) {
@@ -1187,8 +1188,9 @@ static void darken(UIView *glass) {
         if (!glass && ([option[1] isEqual:kXHSNativeGlassMessages] || [option[1] isEqual:kXHSNativeGlassChat])) continue;
         [rows addObject:switchRow(option[0], [config boolForKey:option[1]], [@"pref." stringByAppendingString:option[1]])];
     }
+    [rows addObject:switchRow(@"启用液态玻璃", config.isNativeLayoutEnabled, [@"pref." stringByAppendingString:kXHSNativeNativeLayoutEnabled])];
     [rows addObject:gap(8)];
-    [rows addObject:row(@"label", rowTitle(@"下次进入页面时生效。"), @"glass.note")];
+    [rows addObject:row(@"label", rowTitle(@"开关需重启小红书"), @"glass.note")];
     [rows addObject:gap(24)];
 
     [rows addObject:row(@"label", rowTitle(@"不透明度"), @"fillHeading")];
@@ -1366,13 +1368,38 @@ static void darken(UIView *glass) {
 
 + (void)handleSwitch:(NSString *)identity on:(BOOL)on {
     XHSNativeConfig *config = XHSNativeConfig.shared;
-    if ([identity hasPrefix:@"pref."]) [config setBool:on forKey:[identity substringFromIndex:5]];
-    else if ([identity hasPrefix:@"tab."]) [config setTab:[identity substringFromIndex:4] hidden:!on];
+    if ([identity hasPrefix:@"pref."]) {
+        NSString *key = [identity substringFromIndex:5];
+        [config setBool:on forKey:key];
+        if ([key isEqualToString:kXHSNativeNativeLayoutEnabled]) return;
+    } else if ([identity hasPrefix:@"tab."]) [config setTab:[identity substringFromIndex:4] hidden:!on];
     else if ([identity hasPrefix:@"channel."]) [config setChannel:[identity substringFromIndex:8].integerValue hidden:!on];
     [self applySettings];
 }
 
++ (NSString *)identityForSwitch:(id)control inPage:(id)page {
+    UIView *view = [control isKindOfClass:UIView.class] ? control : nil;
+    while (view && ![view isKindOfClass:UITableViewCell.class]) view = view.superview;
+    UITableViewCell *cell = [view isKindOfClass:UITableViewCell.class] ? (UITableViewCell *)view : nil;
+    UITableView *table = cell.superview;
+    while (table && ![table isKindOfClass:UITableView.class]) table = (UITableView *)table.superview;
+    if (!table) return nil;
+    NSIndexPath *path = [table indexPathForCell:cell];
+    if (!path) return nil;
+    NSArray *options = nil;
+    @try { options = [[page valueForKey:@"vm"] valueForKey:@"options"]; }
+    @catch (NSException *exception) {}
+    if (![options isKindOfClass:NSArray.class]) options = [self settingsRows];
+    if (path.row >= (NSInteger)options.count) return nil;
+    id option = options[path.row];
+    id identity = nil;
+    @try { identity = [option valueForKey:@"identity"]; } @catch (NSException *exception) {}
+    return [identity isKindOfClass:NSString.class] ? identity : nil;
+}
+
 + (void)applySettings {
+    [NSUserDefaults.standardUserDefaults synchronize];
+    if (![self isLayoutEnabledForCurrentLaunch]) return;
     [self rebuildTabs];
     [XHSNativeConfig.shared.homeBar setNeedsLayout];
     if (![self supportsGlass]) [XHSNativeLegacy applyLegacySettings];
@@ -1380,9 +1407,18 @@ static void darken(UIView *glass) {
 
 #pragma mark - 系统版本
 
++ (BOOL)isLayoutEnabledForCurrentLaunch {
+    // 布局 Hook 只在启动时注册，当前进程沿用启动时的设置。
+    static dispatch_once_t once;
+    static BOOL enabled;
+    dispatch_once(&once, ^{ enabled = XHSNativeConfig.shared.isNativeLayoutEnabled; });
+    return enabled;
+}
+
 + (BOOL)supportsGlass {
-    if (@available(iOS 26.0, *)) return YES;
-    return NO;
+    // 这里不用 @available：Theos 的 iOS 26 SDK 没有导出 ___isPlatformVersionAtLeast，
+    // 链接会失败；运行时版本判断效果一样
+    return NSProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26;
 }
 
 #pragma mark - iOS 27.1 以下

@@ -24,6 +24,8 @@
 
 // 小红书把系统底栏刷成不透明的白底（换主题时还会再刷），页面因此被截在底栏上方。
 // 它刷的时机很散，直接在底栏的这几个入口上拦，保持系统默认的悬浮样子
+%group Layout
+
 %hook UITabBar
 
 - (void)setBackgroundImage:(UIImage *)image {
@@ -135,6 +137,8 @@
 
 %end
 
+%end
+
 %group Native
 
 %hook UITabBar
@@ -242,6 +246,8 @@
 // 内容延伸到顶栏后面，用系统的 soft 滚动边缘；右上角的搜索进了底栏，位置换成发布。
 // 下沉布局是小红书给折叠屏写好的，这里让普通机型也用上。
 
+%group Layout
+
 %hook XYMHomeViewController
 
 - (NSUInteger)defaultLandingTabPage {
@@ -279,6 +285,8 @@
     %orig;
     [XHSNativeHelper layoutHomeBar:self];
 }
+
+%end
 
 %end
 
@@ -417,6 +425,8 @@
 
 #pragma mark - 滚动联动
 
+%group Layout
+
 // UICollectionView / UITableView 各自重写了 didMoveToWindow，不一定走到 UIScrollView 的实现，三个都挂
 %hook UIScrollView
 - (void)didMoveToWindow {
@@ -462,6 +472,8 @@
 }
 %end
 
+%end
+
 %group Native
 
 %hook XYPMMessageCenterViewController
@@ -494,8 +506,10 @@
 - (void)layoutSubviews {
     %orig;
     static char leftKey, rightKey;
+    if (![self respondsToSelector:NSSelectorFromString(@"homeMenuButton")]) return;
     UIView *menu = [self homeMenuButton];
-    BOOL enabled = [XHSNativeConfig.shared boolForKey:kXHSNativeGlassProfile] && ![self usesDuoNavigation] && [XHSNativeHelper isVisible:menu] && menu.superview == self;
+    BOOL duo = [self respondsToSelector:NSSelectorFromString(@"usesDuoNavigation")] && [self usesDuoNavigation];
+    BOOL enabled = [XHSNativeConfig.shared boolForKey:kXHSNativeGlassProfile] && !duo && [XHSNativeHelper isVisible:menu] && menu.superview == self;
     if (enabled) [XHSNativeHelper plateOn:self key:&leftKey below:menu frame:CGRectInset(menu.frame, -6, -6) bar:kXHSNativeBarProfile];
     else ((UIView *)objc_getAssociatedObject(self, &leftKey)).hidden = YES;
 
@@ -533,6 +547,8 @@
 
 #pragma mark - 评论半屏
 
+%group Layout
+
 %hook XYCommentHalfBar
 - (void)layoutSubviews {
     %orig;
@@ -566,6 +582,8 @@
 }
 %end
 
+%end
+
 // 双击图片：进大图并放大，不点赞
 %hook XYNoteImageView
 - (void)browser:(id)browser doubleClickedAt:(NSInteger)index {
@@ -575,6 +593,69 @@
 %end
 
 #pragma mark - 无水印保存
+
+static thread_local XYPHBaseNote *__strong *imageSaveNoteCapture;
+static char kNoteImageBatchKey;
+
+static XYPHBaseNote *noteForImageSave(XYImageSaveService *service, NSInteger index, NSString *source) {
+    XYPHBaseNote *note = nil;
+    XYPHBaseNote *__strong *previousCapture = imageSaveNoteCapture;
+    imageSaveNoteCapture = &note;
+    @try {
+        // 原生保存上下文会读取这个服务绑定的笔记。这里只读取模型，避免取到预加载的相邻笔记。
+        [service saveImageAutoTrackEventContextAt:index from:source];
+    } @finally {
+        imageSaveNoteCapture = previousCapture;
+    }
+    return note;
+}
+
+static void saveNoteImageList(XYImageSaveService *service, NSString *source, BOOL disableWatermark, NSUInteger count) {
+    __weak XYImageSaveService *weakService = service;
+    NSObject *batch = [NSObject new];
+    objc_setAssociatedObject(service, &kNoteImageBatchKey, batch, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSMutableIndexSet *saved = [NSMutableIndexSet indexSet];
+    [service saveImageListFrom:source disableWatermark:disableWatermark saveAllCompletion:^(NSInteger index, BOOL success) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            XYImageSaveService *service = weakService;
+            if (objc_getAssociatedObject(service, &kNoteImageBatchKey) != batch) return;
+            if (success && index >= 0 && (NSUInteger)index <= count) [saved addIndex:(NSUInteger)index];
+            if (success && saved.count < count) return;
+            objc_setAssociatedObject(service, &kNoteImageBatchKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            if (!success && [service respondsToSelector:@selector(cancelSaveImageListTask)]) [service cancelSaveImageListTask];
+            [service showResultWithIsSuccess:success];
+        });
+    }];
+}
+
+static NSString *originalLivePhotoVideoURL(id imageInfo) {
+    id video = nil;
+    @try { video = [imageInfo valueForKey:@"livePhotoVideoUrl"]; } @catch (NSException *exception) {}
+    if ([video isKindOfClass:NSURL.class]) video = [video absoluteString];
+    return [video isKindOfClass:NSString.class] && [video length] ? video : nil;
+}
+
+static BOOL offerNoteImageSaveOptions(XYImageSaveService *service, NSInteger index, NSString *source, BOOL disableWatermark, dispatch_block_t saveCurrent) {
+    if (!NSThread.isMainThread || index < 0 || !source ||
+        ![service respondsToSelector:@selector(saveImageAutoTrackEventContextAt:from:)] ||
+        ![service respondsToSelector:@selector(saveImageListFrom:disableWatermark:saveAllCompletion:)] ||
+        ![service respondsToSelector:@selector(showResultWithIsSuccess:)]) return NO;
+
+    XYPHBaseNote *note = noteForImageSave(service, index, source);
+    NSUInteger count = note.imagesList.count;
+    if (count < 2 || (NSUInteger)index >= count) return NO;
+
+    XYPHBaseNote *(^currentNote)(void) = ^{
+        XYPHBaseNote *now = noteForImageSave(service, index, source);
+        return now == note || [now.noteId isEqualToString:note.noteId] ? now : nil;
+    };
+    return [XHSNativeSave presentImageSaveOptionsInWindow:nil saveCurrent:^{
+        if ((NSUInteger)index < currentNote().imagesList.count) saveCurrent();
+    } saveAll:^{
+        NSUInteger currentCount = currentNote().imagesList.count;
+        if (currentCount > 1) saveNoteImageList(service, source, disableWatermark, currentCount);
+    } saveVideo:nil];
+}
 
 // 小红书保存别人的笔记时，图片在本地画水印，视频和实况等服务器渲染带水印的版本；
 // 笔记保存配置的 disableWatermark 为真时（自己的笔记就是这样）直接存原图、原视频。
@@ -592,12 +673,35 @@
 
 // 没有保存配置的笔记补一个默认的，不然读到的 disableWatermark 是空
 %hook XYPHBaseNote
+- (NSArray *)imagesList {
+    NSArray *images = %orig;
+    if (imageSaveNoteCapture && !*imageSaveNoteCapture) *imageSaveNoteCapture = self;
+    return images;
+}
+
 - (XYPHMediaSaveConfig *)mediaSaveConfig {
     XYPHMediaSaveConfig *config = %orig;
     if (config || !XHSNativeConfig.shared.isNoWatermarkEnabled) return config;
     return [objc_getClass("XYPHMediaSaveConfig") new];
 }
 %end
+
+static void (^slideSaveCompletion(XYVFVideoDownloaderManager *manager))(BOOL) {
+    return ^(BOOL success) {
+        if (success) [manager showSaveSuccess];
+        else [manager showSaveFail:nil];
+    };
+}
+
+static BOOL offerSlideSaveOptions(UIView *slides, void (^completion)(BOOL), dispatch_block_t saveVideo) {
+    UIWindow *window = slides.window;
+    if (!window) return NO;
+    return [XHSNativeSave presentImageSaveOptionsInWindow:window saveCurrent:^{
+        if (slides.window == window) [XHSNativeSave saveSlides:slides all:NO completion:completion];
+    } saveAll:^{
+        if (slides.window == window) [XHSNativeSave saveSlides:slides all:YES completion:completion];
+    } saveVideo:saveVideo];
+}
 
 // 视频下载器自己也记着这个值，不去水印时会轮询服务器拿渲染好的带水印视频
 %hook XYVFVideoDownloaderManager
@@ -609,40 +713,62 @@
 // 当前这张、全部图片（实况存实况，静态图存原图），或者照原来存成视频
 - (void)download:(NSString *)url noteId:(NSString *)noteId videoDuration:(NSInteger)duration {
     UIView *slides = XHSNativeConfig.shared.isNoWatermarkEnabled ? [XHSNativeSave slidesOfNote:noteId] : nil;
-    UIWindow *window = slides.window;
-    if (!window) return %orig;
-
-    void (^done)(BOOL) = ^(BOOL success) {
-        if (success) [self showSaveSuccess];
-        else [self showSaveFail:nil];
-    };
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存" message:nil preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"下载当前图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [XHSNativeSave saveSlides:slides all:NO completion:done];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"下载所有图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [XHSNativeSave saveSlides:slides all:YES completion:done];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"保存为视频" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    dispatch_block_t saveVideo = ^{
         %orig;
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    // 保存是从长按面板点进来的，面板这时正在收起，等它收完再从最上层的页面弹
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        UIViewController *top = window.rootViewController;
-        while (top.presentedViewController && !top.presentedViewController.isBeingDismissed) top = top.presentedViewController;
-        [top presentViewController:alert animated:YES completion:nil];
-    });
+    };
+    if (!offerSlideSaveOptions(slides, slideSaveCompletion(self), saveVideo)) %orig;
+}
+
+// 9.35 的原生“保存到相册”不走上面的 download:，而是直接进这里。
+- (void)saveVideoToAlbumWithUrl:(NSString *)url {
+    UIView *slides = XHSNativeConfig.shared.isNoWatermarkEnabled ? [XHSNativeSave visibleSlides] : nil;
+    if (!slides) return %orig;
+    void (^done)(BOOL) = slideSaveCompletion(self);
+    if (![XHSNativeSave isMultipleImageSlides:slides]) {
+        [XHSNativeSave saveSlides:slides all:NO completion:done];
+        return;
+    }
+    dispatch_block_t saveVideo = ^{
+        %orig;
+    };
+    if (!offerSlideSaveOptions(slides, done, saveVideo)) %orig;
 }
 %end
 
+%hook XYImageSaveService
+- (void)saveImageListFrom:(NSString *)source disableWatermark:(BOOL)disableWatermark saveAllCompletion:(void (^)(NSInteger index, BOOL success))completion {
+    %orig(source, disableWatermark || XHSNativeConfig.shared.isNoWatermarkEnabled, completion);
+}
+
+- (void)saveImageAt:(NSInteger)index from:(NSString *)source disableWatermark:(BOOL)disableWatermark completion:(void (^)(BOOL success))completion {
+    dispatch_block_t saveCurrent = ^{
+        %orig;
+    };
+    if (!offerNoteImageSaveOptions(self, index, source, disableWatermark, saveCurrent)) %orig;
+}
+
+- (void)saveImageWithoutManualTrackAt:(NSInteger)index from:(NSString *)source disableWatermark:(BOOL)disableWatermark completion:(void (^)(BOOL success))completion {
+    dispatch_block_t saveCurrent = ^{
+        %orig;
+    };
+    if (!offerNoteImageSaveOptions(self, index, source, disableWatermark, saveCurrent)) %orig;
+}
+
 // 实况的视频那一段不看 disableWatermark：总是先请求 note/live_photo/save，让服务器渲染带水印的视频，
 // disableWatermark 只管封面。无水印时跳过这一步，把笔记里原始的实况视频直接交给后面的保存
-%hook XYImageSaveService
 - (void)requestLivePhotoWatermarkWithImageInfo:(id)imageInfo userId:(NSString *)userId disableWatermark:(BOOL)disableWatermark startTime:(double)startTime {
-    NSString *video = nil;
-    @try { video = [imageInfo valueForKey:@"livePhotoVideoUrl"]; } @catch (NSException *exception) {}
-    if (!XHSNativeConfig.shared.isNoWatermarkEnabled || ![video isKindOfClass:NSString.class] || !video.length) return %orig;
+    if (!XHSNativeConfig.shared.isNoWatermarkEnabled) return %orig;
+    NSString *video = originalLivePhotoVideoURL(imageInfo);
+    if (!video) return %orig;
+    [self saveLivePhotoWatermarkWithLivePhotoVideoURL:video imageInfo:imageInfo userId:userId disableWatermark:YES startTime:startTime];
+}
+
+// 批量保存实况直接使用缓存的渲染结果，不经过单张保存的水印请求入口。
+- (void)saveLivePhotoFromCacheWithLivePhotoInfo:(id)livePhotoInfo imageInfo:(id)imageInfo userId:(NSString *)userId disableWatermark:(BOOL)disableWatermark startTime:(double)startTime {
+    if (!XHSNativeConfig.shared.isNoWatermarkEnabled ||
+        ![self respondsToSelector:@selector(saveLivePhotoWatermarkWithLivePhotoVideoURL:imageInfo:userId:disableWatermark:startTime:)]) return %orig;
+    NSString *video = originalLivePhotoVideoURL(imageInfo);
+    if (!video) return %orig;
     [self saveLivePhotoWatermarkWithLivePhotoVideoURL:video imageInfo:imageInfo userId:userId disableWatermark:YES startTime:startTime];
 }
 %end
@@ -714,6 +840,8 @@
 %end
 
 // 关注按钮原来是红色描边的小药丸，放进玻璃里显得碎。去掉描边只留字，字稍微加重
+%group Layout
+
 %hook XYFollowBtn
 
 - (void)layoutSubviews {
@@ -741,6 +869,8 @@
     %orig;
     [XHSNativeHelper layoutVideoEngage:self];
 }
+%end
+
 %end
 
 #pragma mark - 设置界面
@@ -811,9 +941,17 @@
 
 // 开关拨动。两个参数一个是这一行的选项，一个是带开关的单元格
 - (void)didChangeValueFor:(id)first related:(id)second {
-    id option = [first respondsToSelector:NSSelectorFromString(@"identity")] ? first : second;
-    id cell = option == first ? second : first;
-    [XHSNativeHelper handleSwitch:[option valueForKey:@"identity"] on:[[cell valueForKey:@"isOn"] boolValue]];
+    id option = [first isKindOfClass:objc_getClass("StandardOption")] ? first :
+                ([second isKindOfClass:objc_getClass("StandardOption")] ? second : nil);
+    id control = option == first ? second : first;
+    NSString *identity = [XHSNativeHelper identityForSwitch:control inPage:self];
+    if (!identity.length) return;
+    BOOL on = [[control valueForKey:@"isOn"] boolValue];
+    [XHSNativeHelper handleSwitch:identity on:on];
+    if ([self respondsToSelector:NSSelectorFromString(@"reloadRows")]) {
+        SEL reload = NSSelectorFromString(@"reloadRows");
+        ((void (*)(id, SEL))objc_msgSend)(self, reload);
+    }
 }
 
 %end
@@ -843,18 +981,21 @@
 %end
 
 %ctor {
-    %init(XYMHomeDataSource = objc_getClass("XYHomeModule.XYMHomeDataSource"),
-          XYMainFrameEntranceConfig = objc_getClass("XYHomeModule.MainFrameEntranceConfigManager"),
+    %init(XYMainFrameEntranceConfig = objc_getClass("XYHomeModule.MainFrameEntranceConfigManager"),
           XYMainFrameLeftCache = objc_getClass("XYModuleInterface.MainFrameLeftCacheModel"),
           XYHomeDotsSwipeInstaller = objc_getClass("XYHomeModule.HomeDotsSwipeInstaller"),
           XYHomeService = objc_getClass("XYHomeModule.HomeServiceImp"),
+          XYNoteImageView = objc_getClass("XYNoteModule.NoteImageView"),
+          XYImageSaveService = objc_getClass("XYNoteModule.ImageSaveService"),
+          XYCommentMediaSaveService = objc_getClass("XYNoteModule.CommentMediaSaveService"));
+    if (![XHSNativeHelper isLayoutEnabledForCurrentLaunch]) return;
+
+    %init(Layout,
+          XYMHomeDataSource = objc_getClass("XYHomeModule.XYMHomeDataSource"),
           XYMarketRootInterface = objc_getClass("XYShopping.MarketRootInterface"),
           XYCommentHalfBar = objc_getClass("_TtCC12XYNoteModule32CommentHalflayerBottomController4View"),
           XYNoteDetailPage = objc_getClass("XYNoteModule.NoteDetailPageInterface"),
           XYNoteDirectionView = objc_getClass("XYNoteModule.NoteDirectionView"),
-          XYNoteImageView = objc_getClass("XYNoteModule.NoteImageView"),
-          XYImageSaveService = objc_getClass("XYNoteModule.ImageSaveService"),
-          XYCommentMediaSaveService = objc_getClass("XYNoteModule.CommentMediaSaveService"),
           XYVFHeadView = objc_getClass("XYOldNoteModule.VFHeadView"),
           XYVFBottomEngageView = objc_getClass("XYOldNoteModule.VFBottomEngageView"));
     // 低系统的那一份在 XHSNativeLegacyHooks.xm 里加载

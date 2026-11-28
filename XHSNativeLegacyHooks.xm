@@ -313,7 +313,7 @@ static char kPreviousPageKey;
 %end
 
 %ctor {
-    if ([XHSNativeHelper supportsGlass]) return;
+    if (![XHSNativeHelper isLayoutEnabledForCurrentLaunch] || [XHSNativeHelper supportsGlass]) return;
     %init(XYNativeSearchBar = objc_getClass("XYSearchBar.XYSearchBarV2"),
           XYAdsGoodsNoteBottom = objc_getClass("XYAdsBusiness.AdsGoodsNoteBottomView"),
           XYNoteDetailPage = objc_getClass("XYNoteModule.NoteDetailPageInterface"),

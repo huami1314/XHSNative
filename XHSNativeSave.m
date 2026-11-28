@@ -7,6 +7,7 @@
 //
 #import "XHSNativeSave.h"
 #import <AVFoundation/AVFoundation.h>
+#import <CoreAudio/CoreAudioTypes.h>
 #import <ImageIO/ImageIO.h>
 #import <Photos/Photos.h>
 #import <objc/message.h>
@@ -56,7 +57,12 @@ static void collectStreams(id node, NSMutableArray<NSDictionary *> *found) {
     if ([url hasPrefix:@"http"]) {
         double pixels = [dict[@"width"] doubleValue] * [dict[@"height"] doubleValue];
         double bitrate = MAX([dict[@"avg_bitrate"] doubleValue], [dict[@"video_bitrate"] doubleValue]);
-        [found addObject:@{@"url": url, @"score": @(pixels * 1e4 + bitrate)}];
+        // 实况的高清 h265 常常是无声的，带 AAC 的 h264 反而有声音。
+        // 选流时把“带音轨”放在分辨率之前，宁可用稍低一点的清晰度也要保住声音。
+        BOOL hasAudio = [dict[@"audio_bitrate"] doubleValue] > 0 || dict[@"audio_codec"] != nil;
+        double score = pixels * 1e4 + bitrate;
+        if (pixels > 0 && hasAudio) score += 1e15;
+        [found addObject:@{@"url": url, @"score": @(score)}];
     }
     for (id child in dict.allValues) collectStreams(child, found);
 }
@@ -67,6 +73,39 @@ static NSString *bestVideoURL(id info) {
         json = [NSJSONSerialization JSONObjectWithData:[info dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
     NSMutableArray<NSDictionary *> *found = [NSMutableArray array];
     collectStreams(json, found);
+    NSDictionary *best = nil;
+    for (NSDictionary *stream in found)
+        if (!best || [stream[@"score"] doubleValue] > [best[@"score"] doubleValue]) best = stream;
+    return best[@"url"];
+}
+
+// 有些实况把视频和音频拆成两路：视频 mp4 只有画面，旁边另给一条 m4a。
+// 这里单独收集纯音频地址，视频没音轨时用它补一条。
+static void collectAudioStreams(id node, NSMutableArray<NSDictionary *> *found) {
+    if ([node isKindOfClass:NSArray.class]) {
+        for (id child in node) collectAudioStreams(child, found);
+        return;
+    }
+    if (![node isKindOfClass:NSDictionary.class]) return;
+    NSDictionary *dict = node;
+    NSString *url = string(dict[@"master_url"]) ?: string(dict[@"url"]);
+    if (!url) {
+        NSArray *backups = dict[@"backup_urls"];
+        if ([backups isKindOfClass:NSArray.class]) url = string(backups.firstObject);
+    }
+    BOOL audioOnly = (dict[@"audio_codec"] != nil || dict[@"audio_bitrate"] != nil) &&
+                     [dict[@"width"] doubleValue] <= 0 && [dict[@"height"] doubleValue] <= 0;
+    if ([url hasPrefix:@"http"] && (audioOnly || [url.pathExtension.lowercaseString isEqualToString:@"m4a"]))
+        [found addObject:@{@"url": url, @"score": @([dict[@"audio_bitrate"] doubleValue])}];
+    for (id child in dict.allValues) collectAudioStreams(child, found);
+}
+
+static NSString *bestAudioURL(id info) {
+    id json = info;
+    if ([info isKindOfClass:NSString.class])
+        json = [NSJSONSerialization JSONObjectWithData:[info dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+    NSMutableArray<NSDictionary *> *found = [NSMutableArray array];
+    collectAudioStreams(json, found);
     NSDictionary *best = nil;
     for (NSDictionary *stream in found)
         if (!best || [stream[@"score"] doubleValue] > [best[@"score"] doubleValue]) best = stream;
@@ -165,6 +204,7 @@ static void stampVideo(NSURL *source, NSString *assetID, void (^done)(NSURL *fil
 
     // 原样搬运音视频，不重新编码
     NSMutableArray<NSArray *> *pairs = [NSMutableArray array];
+    BOOL hasVideo = NO;
     for (AVAssetTrack *track in asset.tracks) {
         if (![track.mediaType isEqualToString:AVMediaTypeVideo] && ![track.mediaType isEqualToString:AVMediaTypeAudio]) continue;
         AVAssetReaderTrackOutput *outputTrack = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:track outputSettings:nil];
@@ -174,6 +214,7 @@ static void stampVideo(NSURL *source, NSString *assetID, void (^done)(NSURL *fil
         if (![reader canAddOutput:outputTrack] || ![writer canAddInput:input]) continue;
         [reader addOutput:outputTrack];
         [writer addInput:input];
+        if ([track.mediaType isEqualToString:AVMediaTypeVideo]) hasVideo = YES;
         [pairs addObject:@[outputTrack, input]];
     }
 
@@ -184,7 +225,7 @@ static void stampVideo(NSURL *source, NSString *assetID, void (^done)(NSURL *fil
     AVAssetWriterInput *metadataInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeMetadata outputSettings:nil sourceFormatHint:format];
     if (format) CFRelease(format);
     AVAssetWriterInputMetadataAdaptor *adaptor = [AVAssetWriterInputMetadataAdaptor assetWriterInputMetadataAdaptorWithAssetWriterInput:metadataInput];
-    if (!pairs.count || ![writer canAddInput:metadataInput]) return done(nil);
+    if (!hasVideo || ![writer canAddInput:metadataInput]) return done(nil);
     [writer addInput:metadataInput];
     if (![writer startWriting] || ![reader startReading]) return done(nil);
     [writer startSessionAtSourceTime:kCMTimeZero];
@@ -202,17 +243,27 @@ static void stampVideo(NSURL *source, NSString *assetID, void (^done)(NSURL *fil
     for (NSArray *pair in pairs) {
         AVAssetReaderTrackOutput *outputTrack = pair[0];
         AVAssetWriterInput *input = pair[1];
+        __block BOOL finished = NO;
+        void (^complete)(void) = ^{
+            if (finished) return;
+            finished = YES;
+            [input markAsFinished];
+            dispatch_group_leave(group);
+        };
         dispatch_group_enter(group);
         [input requestMediaDataWhenReadyOnQueue:queue usingBlock:^{
             while (input.isReadyForMoreMediaData) {
                 CMSampleBufferRef buffer = [outputTrack copyNextSampleBuffer];
                 if (!buffer) {
-                    [input markAsFinished];
-                    dispatch_group_leave(group);
+                    complete();
                     return;
                 }
-                [input appendSampleBuffer:buffer];
+                BOOL appended = [input appendSampleBuffer:buffer];
                 CFRelease(buffer);
+                if (!appended) {
+                    complete();
+                    return;
+                }
             }
         }];
     }
@@ -224,25 +275,137 @@ static void stampVideo(NSURL *source, NSString *assetID, void (^done)(NSURL *fil
     });
 }
 
-static void saveLivePhoto(NSString *imageLink, NSString *videoLink, void (^completion)(BOOL success)) {
+static BOOL hasAudioTrack(NSURL *file) {
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:file options:nil];
+    for (AVAssetTrack *track in asset.tracks)
+        if ([track.mediaType isEqualToString:AVMediaTypeAudio]) return YES;
+    return NO;
+}
+
+static NSInteger audioSampleRate(AVAssetTrack *track) {
+    CMFormatDescriptionRef format = (__bridge CMFormatDescriptionRef)track.formatDescriptions.firstObject;
+    const AudioStreamBasicDescription *description =
+        format ? CMAudioFormatDescriptionGetStreamBasicDescription(format) : NULL;
+    return description && description->mSampleRate > 0 ? (NSInteger)description->mSampleRate : 44100;
+}
+
+// 有些流虽然声明了 AAC，实际却是一条静音轨。只判断轨道存在会跳过独立音频，
+// 所以这里真正解码一段 PCM，拿峰值判断有没有声音。
+static BOOL hasAudibleAudio(NSURL *file) {
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:file options:nil];
+    AVAssetTrack *track = [asset tracksWithMediaType:AVMediaTypeAudio].firstObject;
+    if (!track) return NO;
+    AVAssetReader *reader = [AVAssetReader assetReaderWithAsset:asset error:nil];
+    NSDictionary *settings = @{
+        AVFormatIDKey: @(kAudioFormatLinearPCM),
+        AVLinearPCMIsFloatKey: @YES,
+        AVLinearPCMIsNonInterleavedKey: @NO,
+        AVLinearPCMBitDepthKey: @32,
+    };
+    AVAssetReaderTrackOutput *output = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:track outputSettings:settings];
+    output.alwaysCopiesSampleData = NO;
+    if (![reader canAddOutput:output]) return NO;
+    [reader addOutput:output];
+    if (![reader startReading]) return NO;
+    BOOL audible = NO;
+    NSInteger channels = MAX((NSInteger)track.naturalSize.width, 1);
+    NSInteger samples = 0;
+    while (!audible && samples < audioSampleRate(track)) {
+        CMSampleBufferRef sampleBuffer = [output copyNextSampleBuffer];
+        if (!sampleBuffer) break;
+        CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sampleBuffer);
+        size_t length = block ? CMBlockBufferGetDataLength(block) : 0;
+        if (length) {
+            float *data = malloc(length);
+            if (data && CMBlockBufferCopyDataBytes(block, 0, length, data) == kCMBlockBufferNoErr) {
+                NSInteger count = length / sizeof(float);
+                for (NSInteger i = 0; i < count; i++) {
+                    if (fabsf(data[i]) > 1e-5f) {
+                        audible = YES;
+                        break;
+                    }
+                }
+                samples += count / channels;
+            }
+            free(data);
+        }
+        CFRelease(sampleBuffer);
+    }
+    [reader cancelReading];
+    return audible;
+}
+
+// 把视频和独立音频合成一个轨道。原视频即使有静音 AAC 也会被丢掉，
+// 只保留画面，避免音轨数量超过 Live Photo 支持范围。
+static void muxAudio(NSURL *videoFile, NSURL *audioFile, void (^done)(NSURL *file)) {
+    AVURLAsset *video = [AVURLAsset URLAssetWithURL:videoFile options:nil];
+    AVURLAsset *audio = [AVURLAsset URLAssetWithURL:audioFile options:nil];
+    AVAssetTrack *videoTrack = [video tracksWithMediaType:AVMediaTypeVideo].firstObject;
+    AVAssetTrack *audioTrack = [audio tracksWithMediaType:AVMediaTypeAudio].firstObject;
+    if (!videoTrack || !audioTrack) return done(nil);
+
+    AVMutableComposition *composition = [AVMutableComposition composition];
+    AVMutableCompositionTrack *videoComposition = [composition addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+    AVMutableCompositionTrack *audioComposition = [composition addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+    NSError *error = nil;
+    [videoComposition insertTimeRange:CMTimeRangeMake(kCMTimeZero, video.duration) ofTrack:videoTrack atTime:kCMTimeZero error:&error];
+    if (error) return done(nil);
+    CMTime audioDuration = CMTimeMinimum(audio.duration, video.duration);
+    [audioComposition insertTimeRange:CMTimeRangeMake(kCMTimeZero, audioDuration) ofTrack:audioTrack atTime:kCMTimeZero error:&error];
+    if (error) return done(nil);
+    videoComposition.preferredTransform = videoTrack.preferredTransform;
+
+    NSURL *output = temporaryFile(@"mp4");
+    AVAssetExportSession *export = [[AVAssetExportSession alloc] initWithAsset:composition presetName:AVAssetExportPresetPassthrough];
+    export.outputURL = output;
+    export.outputFileType = AVFileTypeMPEG4;
+    export.shouldOptimizeForNetworkUse = NO;
+    [export exportAsynchronouslyWithCompletionHandler:^{
+        if (export.status == AVAssetExportSessionStatusCompleted) return done(output);
+        // 个别机型对 h265 直通合成不认，退一步重新编码，声音比清晰度重要
+        NSURL *fallbackOutput = temporaryFile(@"mp4");
+        AVAssetExportSession *fallback = [[AVAssetExportSession alloc] initWithAsset:composition presetName:AVAssetExportPresetHighestQuality];
+        fallback.outputURL = fallbackOutput;
+        fallback.outputFileType = AVFileTypeMPEG4;
+        [fallback exportAsynchronouslyWithCompletionHandler:^{
+            done(fallback.status == AVAssetExportSessionStatusCompleted ? fallbackOutput : nil);
+        }];
+    }];
+}
+
+static void saveLivePhoto(NSString *imageLink, NSString *videoLink, NSString *audioLink, void (^completion)(BOOL success)) {
     void (^finish)(BOOL) = ^(BOOL success) { dispatch_async(dispatch_get_main_queue(), ^{ completion(success); }); };
     download(imageLink, @"img", ^(NSURL *imageFile) {
         download(videoLink, @"mp4", ^(NSURL *videoFile) {
-            NSString *assetID = NSUUID.UUID.UUIDString;
-            NSURL *image = imageFile ? stampImage(imageFile, assetID) : nil;
-            if (!image || !videoFile) return finish(NO);
-            stampVideo(videoFile, assetID, ^(NSURL *video) {
-                if (!video) return finish(NO);
-                [PHPhotoLibrary requestAuthorizationForAccessLevel:PHAccessLevelAddOnly handler:^(PHAuthorizationStatus status) {
-                    if (status != PHAuthorizationStatusAuthorized && status != PHAuthorizationStatusLimited) return finish(NO);
-                    [PHPhotoLibrary.sharedPhotoLibrary performChanges:^{
-                        PHAssetCreationRequest *request = [PHAssetCreationRequest creationRequestForAsset];
-                        PHAssetResourceCreationOptions *move = [PHAssetResourceCreationOptions new];
-                        move.shouldMoveFile = YES;
-                        [request addResourceWithType:PHAssetResourceTypePhoto fileURL:image options:move];
-                        [request addResourceWithType:PHAssetResourceTypePairedVideo fileURL:video options:move];
-                    } completionHandler:^(BOOL success, NSError *error) { finish(success); }];
-                }];
+            if (!imageFile || !videoFile) return finish(NO);
+            void (^proceed)(NSURL *) = ^(NSURL *videoSource) {
+                NSString *assetID = NSUUID.UUID.UUIDString;
+                NSURL *image = stampImage(imageFile, assetID);
+                if (!image) return finish(NO);
+                stampVideo(videoSource, assetID, ^(NSURL *video) {
+                    if (!video) return finish(NO);
+                    [PHPhotoLibrary requestAuthorizationForAccessLevel:PHAccessLevelAddOnly handler:^(PHAuthorizationStatus status) {
+                        if (status != PHAuthorizationStatusAuthorized && status != PHAuthorizationStatusLimited) return finish(NO);
+                        [PHPhotoLibrary.sharedPhotoLibrary performChanges:^{
+                            PHAssetCreationRequest *request = [PHAssetCreationRequest creationRequestForAsset];
+                            PHAssetResourceCreationOptions *move = [PHAssetResourceCreationOptions new];
+                            move.shouldMoveFile = YES;
+                            [request addResourceWithType:PHAssetResourceTypePhoto fileURL:image options:move];
+                            [request addResourceWithType:PHAssetResourceTypePairedVideo fileURL:video options:move];
+                        } completionHandler:^(BOOL success, NSError *error) { finish(success); }];
+                    }];
+                });
+            };
+            if (!audioLink.length) return proceed(videoFile);
+            download(audioLink, @"m4a", ^(NSURL *audioFile) {
+                if (!audioFile || !hasAudioTrack(audioFile)) return proceed(videoFile);
+                muxAudio(videoFile, audioFile, ^(NSURL *muxed) {
+                    BOOL audible = muxed && hasAudibleAudio(muxed);
+                    if (audible) {
+                        return proceed(muxed);
+                    }
+                    proceed(videoFile);
+                });
             });
         });
     });
@@ -285,9 +448,11 @@ static NSArray *slideImages(UIView *slides) {
 // 一张图：实况存成实况，静态图存原图
 static void saveSlide(id image, void (^completion)(BOOL success)) {
     NSString *cover = string(field(image, @"urlLarge")) ?: string(field(image, @"url"));
-    NSString *video = bestVideoURL(field(image, @"livePhotoVideoInfo")) ?: string(field(image, @"livePhotoVideoUrl"));
+    id videoInfo = field(image, @"livePhotoVideoInfo");
+    NSString *video = bestVideoURL(videoInfo) ?: string(field(image, @"livePhotoVideoUrl"));
+    NSString *audio = bestAudioURL(videoInfo) ?: bestAudioURL(field(image, @"livePhotoMediaInfo"));
     if (!cover) return completion(NO);
-    if (video) return saveLivePhoto(cover, video, completion);
+    if (video) return saveLivePhoto(cover, video, audio, completion);
     if (!saveImageURL(cover, completion)) completion(NO);
 }
 
@@ -295,6 +460,15 @@ static void saveSlide(id image, void (^completion)(BOOL success)) {
 static void saveSlides(NSArray *images, NSUInteger index, BOOL allSaved, void (^completion)(BOOL success)) {
     if (index >= images.count) return completion(allSaved);
     saveSlide(images[index], ^(BOOL success) { saveSlides(images, index + 1, allSaved && success, completion); });
+}
+
+static UIWindow *activeKeyWindow(void) {
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState != UISceneActivationStateForegroundActive) continue;
+        UIWindow *window = ((UIWindowScene *)scene).keyWindow;
+        if (!window.hidden && window.rootViewController) return window;
+    }
+    return nil;
 }
 
 @implementation XHSNativeSave
@@ -342,14 +516,91 @@ static void saveSlides(NSArray *images, NSUInteger index, BOOL allSaved, void (^
     return nil;
 }
 
+static UIView *findVisibleSlides(UIView *view, Class slidesClass) {
+    if ([view isKindOfClass:slidesClass]) {
+        if (!slideImages(view).count) return nil;
+        CGRect frame = [view convertRect:view.bounds toView:nil];
+        CGPoint center = CGPointMake(CGRectGetMidX(view.window.bounds), CGRectGetMidY(view.window.bounds));
+        return CGRectContainsPoint(frame, center) ? view : nil;
+    }
+    for (UIView *child in view.subviews) {
+        UIView *found = findVisibleSlides(child, slidesClass);
+        if (found) return found;
+    }
+    return nil;
+}
+
++ (UIView *)visibleSlides {
+    // 9.35 里实际承载分页的是 ImageSlidesCollection，ImageSlidesView 是外层容器，两个都认
+    for (NSString *name in @[@"XYOldNoteModule.ImageSlidesView", @"XYOldNoteModule.ImageSlidesCollection"]) {
+        Class slidesClass = objc_getClass(name.UTF8String);
+        if (!slidesClass) continue;
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) continue;
+            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+                if (window.hidden) continue;
+                UIView *slides = findVisibleSlides(window, slidesClass);
+                if (slides) return slides;
+            }
+        }
+    }
+    return nil;
+}
+
++ (BOOL)isMultipleImageSlides:(UIView *)slides {
+    return slideImages(slides).count > 1;
+}
+
 + (void)saveSlides:(UIView *)slides all:(BOOL)all completion:(void (^)(BOOL success))completion {
     NSArray *images = slideImages(slides);
     if (all) return saveSlides(images, 0, images.count > 0, completion);
-    id collection = call(slides, @"collection");
     SEL current = NSSelectorFromString(@"currentIndex");
+    id collection = [slides respondsToSelector:current] ? slides : call(slides, @"collection");
     NSInteger index = [collection respondsToSelector:current] ? ((NSInteger (*)(id, SEL))objc_msgSend)(collection, current) : -1;
     if (index < 0 || index >= (NSInteger)images.count) return completion(NO);
     saveSlide(images[index], completion);
+}
+
++ (BOOL)presentImageSaveOptionsInWindow:(UIWindow *)window
+                           saveCurrent:(dispatch_block_t)saveCurrent
+                               saveAll:(dispatch_block_t)saveAll
+                             saveVideo:(dispatch_block_t)saveVideo {
+    if (!NSThread.isMainThread) return NO;
+    if (!(window ?: activeKeyWindow()).rootViewController) return NO;
+
+    // 长按面板执行保存时正在收起，等它完成再显示选择框。
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIViewController *top = (window ?: activeKeyWindow()).rootViewController;
+        while (top) {
+            UIViewController *next = top.presentedViewController;
+            if (!next && [top isKindOfClass:UINavigationController.class]) {
+                next = ((UINavigationController *)top).visibleViewController;
+            }
+            if (!next && [top isKindOfClass:UITabBarController.class]) {
+                next = ((UITabBarController *)top).selectedViewController;
+            }
+            if (!next || next == top) break;
+            if (next.isBeingDismissed) return;
+            top = next;
+        }
+        if (!top.viewIfLoaded.window || [top isKindOfClass:UIAlertController.class]) return;
+
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存" message:nil preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"保存当前图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            saveCurrent();
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"保存所有图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            saveAll();
+        }]];
+        if (saveVideo) {
+            [alert addAction:[UIAlertAction actionWithTitle:@"保存为视频" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                saveVideo();
+            }]];
+        }
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [top presentViewController:alert animated:YES completion:nil];
+    });
+    return YES;
 }
 
 // 评论图片原本是下载后画上水印再存成静态图。直接存原图数据；评论里这张有动图地址就存动图

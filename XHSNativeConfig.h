@@ -7,7 +7,7 @@
 //
 #import <UIKit/UIKit.h>
 
-#define XHSNativeVersion @"1.7(11270234)"
+#define XHSNativeVersion @"1.9(11281405)"
 
 @class XYTabbarController;
 
@@ -21,6 +21,7 @@ extern NSString *const kXHSNativeMinimize;      // 滚动时收起底栏
 extern NSString *const kXHSNativeDisableDots;   // 禁用点点 AI，默认关
 extern NSString *const kXHSNativeNoWatermark;   // 无水印保存，默认关
 extern NSString *const kXHSNativeIgnoreNoSave;  // 解除保存限制：作者关闭保存的笔记也能保存，默认关
+extern NSString *const kXHSNativeNativeLayoutEnabled; // 使用插件的液态玻璃布局，默认开
 extern NSString *const kXHSNativeGlassNote;
 extern NSString *const kXHSNativeGlassSearch;
 extern NSString *const kXHSNativeGlassComments;
@@ -43,6 +44,7 @@ extern NSString *const kXHSNativeBarSearch;
 @interface XHSNativeConfig : NSObject
 
 + (instancetype)shared;
++ (void)setDefaults:(NSUserDefaults *)defaults;
 
 #pragma mark - 运行时状态（不落盘）
 
@@ -68,6 +70,7 @@ extern NSString *const kXHSNativeBarSearch;
 - (BOOL)isTabTitleShown;
 - (BOOL)isChannelLineHidden;
 - (BOOL)isDoubleTapZoomEnabled;
+- (BOOL)isNativeLayoutEnabled;
 - (void)setBool:(BOOL)value forKey:(NSString *)key;
 
 - (NSArray<NSString *> *)tabOrder;

@@ -1,10 +1,11 @@
 Package: com.huami.xhsnative
 Name: XHSNative
-Version: 1.7
+Version: 1.9
 Architecture: iphoneos-arm
 Description: 小红书液态玻璃插件。iOS 26 及以上用系统的液态玻璃，更早的系统用仿玻璃。
 Homepage: https://github.com/huami1314/XHSNative
 Maintainer: huami
 Author: huami
 Section: Tweaks
-Depends: mobilesubstrate, firmware (>= 15.0)
+Depends: ellekit, firmware (>= 15.0)
+Pre-Depends: rootless-compat (>= 0.9)

@@ -6,6 +6,7 @@
 //  Created on: 2026/11/24
 //
 #import "XHSNativeConfig.h"
+#import <objc/runtime.h>
 
 NSString *const kXHSNativeSearchTab = @"XHSNative.searchTab";
 NSString *const kXHSNativeSwapPublish = @"XHSNative.swapPublish";
@@ -16,6 +17,7 @@ NSString *const kXHSNativeMinimize = @"XHSNative.minimize";
 NSString *const kXHSNativeDisableDots = @"XHSNative.disableDots";
 NSString *const kXHSNativeNoWatermark = @"XHSNative.noWatermark";
 NSString *const kXHSNativeIgnoreNoSave = @"XHSNative.ignoreNoSave";
+NSString *const kXHSNativeNativeLayoutEnabled = @"XHSNative.nativeLayout";
 NSString *const kXHSNativeGlassNote = @"XHSNative.glass.note";
 NSString *const kXHSNativeGlassSearch = @"XHSNative.glass.search";
 NSString *const kXHSNativeGlassComments = @"XHSNative.glass.comments";
@@ -53,51 +55,64 @@ static NSString *const kTabTitleSize = @"XHSNative.tabTitleSize";
     return config;
 }
 
++ (void)setDefaults:(NSUserDefaults *)defaults {
+    objc_setAssociatedObject(self, @selector(defaults), defaults, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
++ (NSUserDefaults *)defaults {
+    return objc_getAssociatedObject(self, @selector(defaults)) ?: NSUserDefaults.standardUserDefaults;
+}
+
 + (NSArray<NSString *> *)allTabs {
     return @[@"index", @"shopping", @"message", @"me"];
 }
 
 - (BOOL)boolForKey:(NSString *)key {
-    id value = [NSUserDefaults.standardUserDefaults objectForKey:key];
+    id value = [[[self class] defaults] objectForKey:key];
     return value ? [value boolValue] : YES;
 }
 
 - (BOOL)isDotsDisabled {
-    return [NSUserDefaults.standardUserDefaults boolForKey:kXHSNativeDisableDots];
+    return [[[self class] defaults] boolForKey:kXHSNativeDisableDots];
 }
 
 - (BOOL)isTabTitleShown {
-    return [NSUserDefaults.standardUserDefaults boolForKey:kXHSNativeTabTitles];
+    return [[[self class] defaults] boolForKey:kXHSNativeTabTitles];
 }
 
 - (BOOL)isChannelLineHidden {
-    return [NSUserDefaults.standardUserDefaults boolForKey:kXHSNativeHideChannelLine];
+    return [[[self class] defaults] boolForKey:kXHSNativeHideChannelLine];
 }
 
 - (BOOL)isNoWatermarkEnabled {
-    return [NSUserDefaults.standardUserDefaults boolForKey:kXHSNativeNoWatermark];
+    return [[[self class] defaults] boolForKey:kXHSNativeNoWatermark];
 }
 
 - (BOOL)isSaveRestrictionIgnored {
-    return [NSUserDefaults.standardUserDefaults boolForKey:kXHSNativeIgnoreNoSave];
+    return [[[self class] defaults] boolForKey:kXHSNativeIgnoreNoSave];
 }
 
 - (BOOL)isPublishSwapped {
-    return [NSUserDefaults.standardUserDefaults boolForKey:kXHSNativeSwapPublish];
+    return [[[self class] defaults] boolForKey:kXHSNativeSwapPublish];
 }
 
 - (BOOL)isDoubleTapZoomEnabled {
-    return [NSUserDefaults.standardUserDefaults boolForKey:kXHSNativeDoubleTapZoom];
+    return [[[self class] defaults] boolForKey:kXHSNativeDoubleTapZoom];
+}
+
+- (BOOL)isNativeLayoutEnabled {
+    return [self boolForKey:kXHSNativeNativeLayoutEnabled];
 }
 
 - (void)setBool:(BOOL)value forKey:(NSString *)key {
-    [NSUserDefaults.standardUserDefaults setBool:value forKey:key];
+    [[[self class] defaults] setBool:value forKey:key];
+    [[[self class] defaults] synchronize];
 }
 
 - (NSArray<NSString *> *)tabOrder {
     NSArray<NSString *> *all = XHSNativeConfig.allTabs;
     NSMutableArray<NSString *> *order = [NSMutableArray array];
-    for (NSString *name in [NSUserDefaults.standardUserDefaults stringArrayForKey:kTabOrder])
+    for (NSString *name in [[[self class] defaults] stringArrayForKey:kTabOrder])
         if ([all containsObject:name] && ![order containsObject:name]) [order addObject:name];
     for (NSString *name in all)
         if (![order containsObject:name]) [order addObject:name];
@@ -105,16 +120,16 @@ static NSString *const kTabTitleSize = @"XHSNative.tabTitleSize";
 }
 
 - (void)setTabOrder:(NSArray<NSString *> *)order {
-    [NSUserDefaults.standardUserDefaults setObject:order forKey:kTabOrder];
+    [[[self class] defaults] setObject:order forKey:kTabOrder];
 }
 
 - (BOOL)isTabHidden:(NSString *)name {
     if ([name isEqualToString:@"index"]) return NO;  // 首页不能藏，发布和搜索都挂在它上面
-    return [[NSUserDefaults.standardUserDefaults stringArrayForKey:kTabHidden] containsObject:name];
+    return [[[[self class] defaults] stringArrayForKey:kTabHidden] containsObject:name];
 }
 
 - (void)setTab:(NSString *)name hidden:(BOOL)hidden {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSUserDefaults *defaults = [[self class] defaults];
     NSMutableArray<NSString *> *names = [([defaults stringArrayForKey:kTabHidden] ?: @[]) mutableCopy];
     [names removeObject:name];
     if (hidden) [names addObject:name];
@@ -122,11 +137,11 @@ static NSString *const kTabTitleSize = @"XHSNative.tabTitleSize";
 }
 
 - (BOOL)isChannelHidden:(NSUInteger)page {
-    return [[NSUserDefaults.standardUserDefaults arrayForKey:kChannelHidden] containsObject:@(page)];
+    return [[[[self class] defaults] arrayForKey:kChannelHidden] containsObject:@(page)];
 }
 
 - (void)setChannel:(NSUInteger)page hidden:(BOOL)hidden {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSUserDefaults *defaults = [[self class] defaults];
     NSMutableArray<NSNumber *> *pages = [([defaults arrayForKey:kChannelHidden] ?: @[]) mutableCopy];
     [pages removeObject:@(page)];
     if (hidden) [pages addObject:@(page)];
@@ -134,12 +149,12 @@ static NSString *const kTabTitleSize = @"XHSNative.tabTitleSize";
 }
 
 - (NSString *)nameForChannel:(NSUInteger)page {
-    NSString *name = [NSUserDefaults.standardUserDefaults dictionaryForKey:kChannelNames][@(page).stringValue];
+    NSString *name = [[[self class] defaults] dictionaryForKey:kChannelNames][@(page).stringValue];
     return [name isKindOfClass:NSString.class] && name.length ? name : nil;
 }
 
 - (void)setName:(NSString *)name forChannel:(NSUInteger)page {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSUserDefaults *defaults = [[self class] defaults];
     NSMutableDictionary *names = [([defaults dictionaryForKey:kChannelNames] ?: @{}) mutableCopy];
     names[@(page).stringValue] = name.length ? name : nil;
     [defaults setObject:names forKey:kChannelNames];
@@ -149,7 +164,7 @@ static NSString *const kTabTitleSize = @"XHSNative.tabTitleSize";
 - (NSArray<NSNumber *> *)channelOrder {
     NSArray<NSNumber *> *all = @[@0, @1, @2];
     NSMutableArray<NSNumber *> *order = [NSMutableArray array];
-    for (id page in [NSUserDefaults.standardUserDefaults arrayForKey:kChannelOrder])
+    for (id page in [[[self class] defaults] arrayForKey:kChannelOrder])
         if ([all containsObject:page] && ![order containsObject:page]) [order addObject:page];
     for (NSNumber *page in all)
         if (![order containsObject:page]) [order addObject:page];
@@ -157,22 +172,22 @@ static NSString *const kTabTitleSize = @"XHSNative.tabTitleSize";
 }
 
 - (void)setChannelOrder:(NSArray<NSNumber *> *)order {
-    [NSUserDefaults.standardUserDefaults setObject:order forKey:kChannelOrder];
+    [[[self class] defaults] setObject:order forKey:kChannelOrder];
 }
 
 - (CGFloat)fillForBar:(NSString *)bar {
-    id value = [NSUserDefaults.standardUserDefaults objectForKey:[kFillPrefix stringByAppendingString:bar]];
+    id value = [[[self class] defaults] objectForKey:[kFillPrefix stringByAppendingString:bar]];
     if (value) return MIN(MAX([value doubleValue], 0), 100);
     // 笔记底栏下面滚的是评论文字，默认压一半，其余默认纯玻璃
     return [bar isEqualToString:kXHSNativeBarNoteBottom] ? 50 : 0;
 }
 
 - (void)setFill:(CGFloat)fill forBar:(NSString *)bar {
-    [NSUserDefaults.standardUserDefaults setDouble:fill forKey:[kFillPrefix stringByAppendingString:bar]];
+    [[[self class] defaults] setDouble:fill forKey:[kFillPrefix stringByAppendingString:bar]];
 }
 
 static CGFloat number(NSString *key, CGFloat fallback, CGFloat low, CGFloat high) {
-    id value = [NSUserDefaults.standardUserDefaults objectForKey:key];
+    id value = [[XHSNativeConfig defaults] objectForKey:key];
     return value ? MIN(MAX([value doubleValue], low), high) : fallback;
 }
 
@@ -181,7 +196,7 @@ static CGFloat number(NSString *key, CGFloat fallback, CGFloat low, CGFloat high
 }
 
 - (void)setBlurPercent:(CGFloat)blur {
-    [NSUserDefaults.standardUserDefaults setDouble:blur forKey:kBlur];
+    [[[self class] defaults] setDouble:blur forKey:kBlur];
 }
 
 - (CGFloat)tabIconSize {
@@ -189,7 +204,7 @@ static CGFloat number(NSString *key, CGFloat fallback, CGFloat low, CGFloat high
 }
 
 - (void)setTabIconSize:(CGFloat)size {
-    [NSUserDefaults.standardUserDefaults setDouble:size forKey:kTabIconSize];
+    [[[self class] defaults] setDouble:size forKey:kTabIconSize];
 }
 
 - (CGFloat)tabTitleSize {
@@ -197,11 +212,11 @@ static CGFloat number(NSString *key, CGFloat fallback, CGFloat low, CGFloat high
 }
 
 - (void)setTabTitleSize:(CGFloat)size {
-    [NSUserDefaults.standardUserDefaults setDouble:size forKey:kTabTitleSize];
+    [[[self class] defaults] setDouble:size forKey:kTabTitleSize];
 }
 
 - (void)reset {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSUserDefaults *defaults = [[self class] defaults];
     for (NSString *key in defaults.dictionaryRepresentation.allKeys)
         if ([key hasPrefix:@"XHSNative."]) [defaults removeObjectForKey:key];
 }
