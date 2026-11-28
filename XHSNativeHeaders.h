@@ -168,6 +168,8 @@
 @end
 
 @interface XYPHBaseNote : NSObject
+@property (nonatomic, readonly) NSString *noteId;
+@property (nonatomic, readonly) NSArray *imagesList;
 @end
 
 @interface XYVFVideoDownloaderManager : NSObject
@@ -193,6 +195,10 @@
 
 // 笔记图片、实况的保存（XYNoteModule.ImageSaveService）
 @interface XYImageSaveService : NSObject
+- (id)saveImageAutoTrackEventContextAt:(NSInteger)index from:(NSString *)source;
+- (void)saveImageListFrom:(NSString *)source disableWatermark:(BOOL)disableWatermark saveAllCompletion:(void (^)(NSInteger index, BOOL success))completion;
+- (void)cancelSaveImageListTask;
+- (void)showResultWithIsSuccess:(BOOL)success;
 - (void)saveLivePhotoWatermarkWithLivePhotoVideoURL:(NSString *)videoURL imageInfo:(id)imageInfo userId:(NSString *)userId disableWatermark:(BOOL)disableWatermark startTime:(double)startTime;
 @end
 

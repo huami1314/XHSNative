@@ -73,6 +73,12 @@ static void testConfig(void) {
     // 与上游一致：功能子开关默认开启，特殊行为开关默认关闭
     for (NSString *key in keys) assert([config boolForKey:key]);
     assert(!config.isDotsDisabled && !config.isPublishSwapped && !config.isDoubleTapZoomEnabled);
+    assert(config.isNativeLayoutEnabled);
+    [config setBool:NO forKey:kXHSNativeNativeLayoutEnabled];
+    NSUserDefaults *reopened = [[NSUserDefaults alloc] initWithSuiteName:suite];
+    [XHSNativeConfig setDefaults:reopened];
+    assert(!config.isNativeLayoutEnabled);
+    [XHSNativeConfig setDefaults:defaults];
     assert(!config.isNoWatermarkEnabled && !config.isSaveRestrictionIgnored);
     [config setBool:YES forKey:kXHSNativeNoWatermark];
     assert(config.isNoWatermarkEnabled);

@@ -1161,9 +1161,11 @@ static void applyHomeTopInset(UIView *view, CGFloat targetTop, CGFloat safeBotto
 
 + (void)layoutProfileBar:(XYPFProfileV2NavigationBar *)bar {
     static char leftKey, rightKey;
+    if (![bar respondsToSelector:NSSelectorFromString(@"homeMenuButton")]) return;
     UIView *menu = [bar homeMenuButton];
     UIView *share = [bar shareButton], *scan = [bar scanButton], *edit = [bar editButton];
-    BOOL enabled = [XHSNativeConfig.shared boolForKey:kXHSNativeGlassProfile] && ![bar usesDuoNavigation] && [XHSNativeHelper isVisible:menu] && menu.superview == bar;
+    BOOL duo = [bar respondsToSelector:NSSelectorFromString(@"usesDuoNavigation")] && [bar usesDuoNavigation];
+    BOOL enabled = [XHSNativeConfig.shared boolForKey:kXHSNativeGlassProfile] && !duo && [XHSNativeHelper isVisible:menu] && menu.superview == bar;
     if (!enabled) {
         [XHSNativeViewState restoreOwner:bar];
         return;

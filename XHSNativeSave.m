@@ -462,6 +462,15 @@ static void saveSlides(NSArray *images, NSUInteger index, BOOL allSaved, void (^
     saveSlide(images[index], ^(BOOL success) { saveSlides(images, index + 1, allSaved && success, completion); });
 }
 
+static UIWindow *activeKeyWindow(void) {
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState != UISceneActivationStateForegroundActive) continue;
+        UIWindow *window = ((UIWindowScene *)scene).keyWindow;
+        if (!window.hidden && window.rootViewController) return window;
+    }
+    return nil;
+}
+
 @implementation XHSNativeSave
 
 + (void)rememberComment:(id)comment {
@@ -538,14 +547,60 @@ static UIView *findVisibleSlides(UIView *view, Class slidesClass) {
     return nil;
 }
 
++ (BOOL)isMultipleImageSlides:(UIView *)slides {
+    return slideImages(slides).count > 1;
+}
+
 + (void)saveSlides:(UIView *)slides all:(BOOL)all completion:(void (^)(BOOL success))completion {
     NSArray *images = slideImages(slides);
     if (all) return saveSlides(images, 0, images.count > 0, completion);
-    id collection = call(slides, @"collection");
     SEL current = NSSelectorFromString(@"currentIndex");
+    id collection = [slides respondsToSelector:current] ? slides : call(slides, @"collection");
     NSInteger index = [collection respondsToSelector:current] ? ((NSInteger (*)(id, SEL))objc_msgSend)(collection, current) : -1;
     if (index < 0 || index >= (NSInteger)images.count) return completion(NO);
     saveSlide(images[index], completion);
+}
+
++ (BOOL)presentImageSaveOptionsInWindow:(UIWindow *)window
+                           saveCurrent:(dispatch_block_t)saveCurrent
+                               saveAll:(dispatch_block_t)saveAll
+                             saveVideo:(dispatch_block_t)saveVideo {
+    if (!NSThread.isMainThread) return NO;
+    if (!(window ?: activeKeyWindow()).rootViewController) return NO;
+
+    // 长按面板执行保存时正在收起，等它完成再显示选择框。
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIViewController *top = (window ?: activeKeyWindow()).rootViewController;
+        while (top) {
+            UIViewController *next = top.presentedViewController;
+            if (!next && [top isKindOfClass:UINavigationController.class]) {
+                next = ((UINavigationController *)top).visibleViewController;
+            }
+            if (!next && [top isKindOfClass:UITabBarController.class]) {
+                next = ((UITabBarController *)top).selectedViewController;
+            }
+            if (!next || next == top) break;
+            if (next.isBeingDismissed) return;
+            top = next;
+        }
+        if (!top.viewIfLoaded.window || [top isKindOfClass:UIAlertController.class]) return;
+
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存" message:nil preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"保存当前图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            saveCurrent();
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"保存所有图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            saveAll();
+        }]];
+        if (saveVideo) {
+            [alert addAction:[UIAlertAction actionWithTitle:@"保存为视频" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                saveVideo();
+            }]];
+        }
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [top presentViewController:alert animated:YES completion:nil];
+    });
+    return YES;
 }
 
 // 评论图片原本是下载后画上水印再存成静态图。直接存原图数据；评论里这张有动图地址就存动图

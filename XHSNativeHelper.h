@@ -90,6 +90,7 @@
 
 #pragma mark - 系统版本
 
++ (BOOL)isLayoutEnabledForCurrentLaunch;
 + (BOOL)supportsGlass;
 
 #pragma mark - iOS 27.1 以下
